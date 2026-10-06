@@ -1,6 +1,7 @@
 import React from 'react';
 import { Navigate, useParams } from 'react-router-dom';
 import OwnerRegister from './OwnerRegister';
+import DirectorRegister from './DirectorRegister';
 import StatutoryRegisterShell from './StatutoryRegisterShell';
 
 const APPOINTMENT_DATES = [
@@ -34,6 +35,8 @@ const REGISTER_CONFIG = {
     dateBasisOptions: APPOINTMENT_DATES,
   },
   directors: {
+    slug: 'directors',
+    recordLabel: 'Director',
     title: 'Register of Directors',
     description: 'View current and historical director records.',
     icon: 'ri-user-star-line',
@@ -150,6 +153,10 @@ const StatutoryRegisterRoute = () => {
   const { registerSlug } = useParams();
 
   if (registerSlug === 'owners') return <OwnerRegister />;
+  // Directors has the same detailed register fields as Owners (position,
+  // nationality/DOB, address and the detail view), so it cannot use the
+  // condensed generic register shell.
+  if (registerSlug === 'directors') return <DirectorRegister />;
   if (REGISTER_CONFIG[registerSlug]) {
     return <StatutoryRegisterShell key={registerSlug} config={REGISTER_CONFIG[registerSlug]} />;
   }

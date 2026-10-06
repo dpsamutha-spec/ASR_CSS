@@ -26,7 +26,7 @@ import DatePickerInput from '../../Components/Common/DatePickerInput';
 import Pagination from '../../Components/Common/Pagination';
 import useCollapseSidebar from '../../hooks/useCollapseSidebar';
 import { getCompanyList, getOfficialList } from '../../helpers/backend_helper';
-import './OwnerRegister.css';
+import './Statutory.css';
 
 const EMPTY_FILTERS = {
   companyId: '',

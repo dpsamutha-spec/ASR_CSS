@@ -72,6 +72,25 @@
 .or-visibility-control { display: flex; align-items: center; gap: 14px; }
 .or-visibility-label { display: inline-flex; align-items: center; gap: 4px; color: var(--vz-heading-color, #334155); font-size: 10.5px; font-weight: 700; }
 .or-visibility-label i { color: #7b8aa3; font-size: 12px; }
+
+/* Director register type tabs */
+.director-register-tabs { display: inline-flex; align-items: center; gap: 3px; padding: 3px; margin-left: 4px; border: 1px solid var(--or-border); border-radius: 8px; background: var(--or-soft); }
+.director-register-tabs button {
+  min-height: 32px;
+  padding: 7px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--or-muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  transition: .15s;
+}
+.director-register-tabs button:hover { color: var(--or-primary); }
+.director-register-tabs button:focus-visible { outline: 2px solid rgba(64,81,137,.35); outline-offset: 1px; }
+.director-register-tabs button.active { color: #fff; background: var(--or-primary); box-shadow: 0 3px 9px rgba(64,81,137,.25); }
 .or-results-heading { display: flex; align-items: baseline; gap: 12px; }
 .or-results-toolbar h5 { margin: 0; color: var(--vz-heading-color, var(--or-ink)); font-size: 15px; font-weight: 700; }
 .or-results-heading span { color: var(--or-muted); font-size: 10.5px; }
@@ -146,6 +165,9 @@
 .or-date-cell small { align-self: flex-start; margin-top: 3px; padding: 1px 5px; border-radius: 8px; font-size: 8px; font-weight: 700; text-transform: uppercase; }
 .or-date-cell small.effective { color: #0d9488; background: rgba(13,148,136,.1); }
 .or-date-cell small.proposed { color: #c47d0b; background: rgba(247,184,75,.16); }
+.or-transaction-stage { display: inline-flex; align-items: center; padding: 4px 9px; border-radius: 999px; font-size: 10px; font-weight: 700; line-height: 1; }
+.or-transaction-stage.proposed { color: #c47d0b; background: rgba(247,184,75,.16); }
+.or-transaction-stage.effective { color: #0d9488; background: rgba(13,148,136,.1); }
 .or-status { display: inline-flex; align-items: center; gap: 6px; padding: 4px 8px; border-radius: 20px; font-size: 9.5px; font-weight: 700; }
 .or-status i { width: 6px; height: 6px; border-radius: 50%; }
 .or-status.active { color: #087f6f; background: rgba(10,179,156,.11); }

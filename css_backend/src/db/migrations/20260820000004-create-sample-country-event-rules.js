@@ -20,23 +20,40 @@ module.exports = {
             return rows[0] || null;
         };
 
-        let unitedStates = await selectOne(
-            `SELECT id FROM \`${countriesTable}\` WHERE iso = 'US' OR iso3 = 'USA' LIMIT 1`,
-            {}
-        );
-        if (!unitedStates) {
-            await queryInterface.bulkInsert(countriesTable, [{
+        // This migration runs before Sequelize seeders.  Ensure its reference
+        // countries exist so that a clean database can be migrated end-to-end.
+        const countryDefaults = {
+            US: {
                 iso: 'US', acra_iso: 'US', name: 'UNITED STATES', country_name: 'United States',
                 nationality: 'American', iso3: 'USA', currency_string: 'US Dollar', currency_code: 'USD',
                 numcode: 840, phonecode: 1, phone_length: '10', region_id: 6, addr_format: null, is_delete: 0,
-            }]);
-            unitedStates = await selectOne(`SELECT id FROM \`${countriesTable}\` WHERE iso = 'US' LIMIT 1`, {});
-        }
-
-        const countryByIso = { US: unitedStates.id };
-        for (const iso of ['IN', 'AE', 'MY']) {
-            const country = await selectOne(`SELECT id FROM \`${countriesTable}\` WHERE iso = :iso LIMIT 1`, { iso });
-            if (!country) throw new Error(`Required country master ${iso} is missing`);
+            },
+            IN: {
+                iso: 'IN', acra_iso: 'IN', name: 'INDIA', country_name: 'India',
+                nationality: 'Indian', iso3: 'IND', currency_string: 'INDIA, RUPEES', currency_code: 'INR',
+                numcode: 356, phonecode: 91, phone_length: '', region_id: 3, addr_format: null, is_delete: 0,
+            },
+            AE: {
+                iso: 'AE', acra_iso: 'AE', name: 'UNITED ARAB EMIRATES', country_name: 'United Arab Emirates',
+                nationality: 'Emirati', iso3: 'ARE', currency_string: 'UNITED ARAB EMIRATES, Dirham', currency_code: 'AED',
+                numcode: 784, phonecode: 971, phone_length: '', region_id: 0, addr_format: null, is_delete: 0,
+            },
+            MY: {
+                iso: 'MY', acra_iso: 'MY', name: 'MALAYSIA', country_name: 'Malaysia',
+                nationality: 'Malaysian', iso3: 'MYS', currency_string: 'MALAYSIA, RINGGIT', currency_code: 'MYR',
+                numcode: 458, phonecode: 60, phone_length: '', region_id: 11, addr_format: null, is_delete: 0,
+            },
+        };
+        const countryByIso = {};
+        for (const [iso, defaults] of Object.entries(countryDefaults)) {
+            let country = await selectOne(
+                `SELECT id FROM \`${countriesTable}\` WHERE iso = :iso OR iso3 = :iso3 LIMIT 1`,
+                { iso, iso3: defaults.iso3 }
+            );
+            if (!country) {
+                await queryInterface.bulkInsert(countriesTable, [defaults]);
+                country = await selectOne(`SELECT id FROM \`${countriesTable}\` WHERE iso = :iso LIMIT 1`, { iso });
+            }
             countryByIso[iso] = country.id;
         }
 

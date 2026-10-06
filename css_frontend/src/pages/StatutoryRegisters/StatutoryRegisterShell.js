@@ -5,8 +5,8 @@ import { toast } from 'react-toastify';
 import BreadCrumb from '../../Components/Common/BreadCrumb';
 import DatePickerInput from '../../Components/Common/DatePickerInput';
 import useCollapseSidebar from '../../hooks/useCollapseSidebar';
-import { getCompanyList } from '../../helpers/backend_helper';
-import './OwnerRegister.css';
+import { getCompanyList, getOfficialList } from '../../helpers/backend_helper';
+import './Statutory.css';
 
 const selectStyles = {
   control: (base, state) => ({
@@ -38,6 +38,29 @@ const emptyFilters = (dateBasis) => ({
   recordStage: 'ALL',
 });
 
+const mainDateOf = (record) => record.date_record
+  || (record.date_records || []).find((item) => String(item.is_main_role) === '1')
+  || (record.date_records || [])[0]
+  || {};
+
+const displayDate = (value) => {
+  if (!value) return '—';
+  const [year, month, day] = String(value).slice(0, 10).split('-').map(Number);
+  if (!year || !month || !day) return value;
+  return new Date(year, month - 1, day).toLocaleDateString('en-GB', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+};
+
+const recordStage = (date, basis) => {
+  const proposed = basis === 'CESSATION' ? date.is_ceased_proposed : date.is_appt_proposed;
+  return Number(proposed) === 1 ? 'PROPOSED' : 'EFFECTIVE';
+};
+
+const recordStatus = (record, date) => (
+  date.ceased_date || Number(record.is_current) === 0 ? 'Ceased' : 'Active'
+);
+
 const StatutoryRegisterShell = ({ config }) => {
   useCollapseSidebar();
 
@@ -48,6 +71,9 @@ const StatutoryRegisterShell = ({ config }) => {
   const [filters, setFilters] = useState(() => emptyFilters(defaultDateBasis));
   const [searching, setSearching] = useState(false);
   const [filtersApplied, setFiltersApplied] = useState(false);
+  const [records, setRecords] = useState([]);
+  const [loadingRecords, setLoadingRecords] = useState(false);
+  const [tableSearch, setTableSearch] = useState('');
 
   document.title = `${config.title} | ASR CSS`;
 
@@ -86,9 +112,28 @@ const StatutoryRegisterShell = ({ config }) => {
     setPdpaMode('WITH');
     setFilters(emptyFilters(defaultDateBasis));
     setFiltersApplied(false);
+    setRecords([]);
+    setTableSearch('');
   };
 
-  const applySearch = () => {
+  const visibleRecords = useMemo(() => {
+    if (!filtersApplied) return [];
+    const needle = tableSearch.trim().toLowerCase();
+    return records.filter((record) => {
+      const date = mainDateOf(record);
+      const dateValue = filters.dateBasis === 'CESSATION' ? date.ceased_date : date.appointment_date;
+      const status = recordStatus(record, date);
+      if (filters.status !== 'ALL' && status.toUpperCase() !== filters.status) return false;
+      if (filters.recordStage !== 'ALL' && recordStage(date, filters.dateBasis) !== filters.recordStage) return false;
+      if (filters.fromDate && (!dateValue || dateValue < filters.fromDate)) return false;
+      if (filters.toDate && (!dateValue || dateValue > filters.toDate)) return false;
+      if (!needle) return true;
+      return [record.entity?.name, record.entity?.client_no, record.official_entity?.name,
+        record.official_entity?.client_no, recordStatus(record, date)].filter(Boolean).join(' ').toLowerCase().includes(needle);
+    });
+  }, [filters, filtersApplied, records, tableSearch]);
+
+  const applySearch = async () => {
     if (!filters.companyId) {
       toast.error('Please select an entity name before searching');
       return;
@@ -98,11 +143,36 @@ const StatutoryRegisterShell = ({ config }) => {
       return;
     }
 
+    // Only the Directors register currently has a result listing on this shared shell.
+    if (!config.slug) {
+      setSearching(true);
+      setTimeout(() => {
+        setSearching(false);
+        setFiltersApplied(true);
+      }, 250);
+      return;
+    }
+
     setSearching(true);
-    setTimeout(() => {
-      setSearching(false);
+    setLoadingRecords(true);
+    try {
+      const response = await getOfficialList({
+        page: 1,
+        limit: 2000,
+        entity_id: filters.companyId,
+        official_master_slug: config.slug,
+        is_ref_id: 0,
+        order: 'created_date:DESC',
+      });
+      setRecords(unwrapList(response));
       setFiltersApplied(true);
-    }, 250);
+    } catch (error) {
+      setRecords([]);
+      toast.error(`Unable to load ${config.title.toLowerCase()}`);
+    } finally {
+      setSearching(false);
+      setLoadingRecords(false);
+    }
   };
 
   return (
@@ -199,6 +269,34 @@ const StatutoryRegisterShell = ({ config }) => {
             </div>
           </div>
         </section>
+
+        {config.slug && <section className="or-results-card">
+          <div className="or-results-toolbar">
+            <div className="or-results-heading">
+              <h5>{config.recordLabel} Records</h5>
+              <span>{!filtersApplied ? 'Search to view records' : loadingRecords ? 'Loading…' : `${visibleRecords.length} record${visibleRecords.length === 1 ? '' : 's'}`}</span>
+            </div>
+            <div className="or-table-search"><i className="ri-search-line" /><input value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} placeholder={`Search ${config.recordLabel.toLowerCase()}...`} /></div>
+          </div>
+          <div className="or-table-wrap">
+            <table className="or-table">
+              <thead><tr><th>Entity</th><th>{config.recordLabel}</th><th>Type</th>{pdpaMode === 'WITH' && <th>Identification</th>}<th>Appointment</th><th>Cessation</th><th>Status</th></tr></thead>
+              <tbody>
+                {!filtersApplied ? <tr><td colSpan={pdpaMode === 'WITH' ? 7 : 6}><div className="or-empty"><span><i className="ri-search-2-line" /></span><h5>Search to view {config.recordLabel.toLowerCase()} records</h5><p>Select an entity and click Search.</p></div></td></tr>
+                  : loadingRecords ? [...Array(4)].map((_, index) => <tr key={index} className="or-skeleton-row">{[...Array(pdpaMode === 'WITH' ? 7 : 6)].map((__, cell) => <td key={cell}><span /></td>)}</tr>)
+                    : visibleRecords.length === 0 ? <tr><td colSpan={pdpaMode === 'WITH' ? 7 : 6}><div className="or-empty"><span><i className="ri-file-search-line" /></span><h5>No {config.recordLabel.toLowerCase()} records found</h5><p>Adjust the register filters and try your search again.</p></div></td></tr>
+                      : visibleRecords.map((record) => {
+                        const date = mainDateOf(record);
+                        const person = record.official_entity || {};
+                        const identification = record.identification || (person.identifications || []).find((item) => item.is_primary) || (person.identifications || [])[0] || {};
+                        const type = record.official_type === 'COMPANY' ? 'Corporate' : record.official_type === 'JOINT' ? 'Joint' : 'Individual';
+                        const status = recordStatus(record, date);
+                        return <tr key={record.official_id}><td><div className="or-company-cell"><div><strong>{record.entity?.name || '—'}</strong><small>{record.entity?.client_no || 'Entity'}</small></div></div></td><td><div className="or-owner-cell"><strong>{person.name || '—'}</strong>{person.client_no && <small>{person.client_no}</small>}</div></td><td><span className={`or-type-badge ${type.toLowerCase()}`}><i className={type === 'Corporate' ? 'ri-building-line' : type === 'Joint' ? 'ri-group-line' : 'ri-user-line'} />{type}</span></td>{pdpaMode === 'WITH' && <td><div className="or-detail-cell"><small>{identification.id_type?.id_name || 'Identification'}</small><strong>{identification.id_number || '—'}</strong></div></td>}<td><div className="or-date-cell"><strong>{displayDate(date.appointment_date)}</strong><small className={recordStage(date, 'APPOINTMENT').toLowerCase()}>{recordStage(date, 'APPOINTMENT')}</small></div></td><td><div className="or-date-cell"><strong>{displayDate(date.ceased_date)}</strong>{date.ceased_date && <small className={recordStage(date, 'CESSATION').toLowerCase()}>{recordStage(date, 'CESSATION')}</small>}</div></td><td><span className={`or-status ${status.toLowerCase()}`}><i />{status}</span></td></tr>;
+                      })}
+              </tbody>
+            </table>
+          </div>
+        </section>}
       </Container>
     </div>
   );
