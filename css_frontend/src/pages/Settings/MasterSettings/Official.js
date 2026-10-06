@@ -46,14 +46,23 @@ const OfficialMaster = () => {
       label:    'Official Name',
       sortable: true,
       gridPrimary: true,
-      width : '40px'
+      // Fixed widths keep columns steady across pages; long names cut with "…" (full on hover)
+      width:    '340px',
+      render:   row => (
+        <span
+          title={row.official_master_name}
+          style={{ display: 'block', maxWidth: 310, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+        >
+          {row.official_master_name}
+        </span>
+      ),
     },
     {
       key:        'official_order',
       label:      'Order',
       sortable:   true,
       showInGrid: true,
-      width : '40px'
+      width:      '100px'
     },
     {
       key:        'representative_label',
@@ -62,15 +71,14 @@ const OfficialMaster = () => {
       showInGrid: true,
       badge:      true,
       badgeMap:   { Yes: 'success', No: 'secondary' },
-      width : '40px'
-
+      width:      '150px'
     },
     {
       key:        'is_entity_type',
       label:      'Entity Type',
       sortable:   false,
       showInGrid: true,
-      width : '40px'
+      width:      '140px'
     },
   ];
 

@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 import useCollapseSidebar from '../../hooks/useCollapseSidebar';
 import DatePickerInput from '../../Components/Common/DatePickerInput';
 import SharePageStrip from '../../Components/Common/SharePageStrip';
+import ClubSourceTable from '../../Components/Common/ClubSourceTable';
 import { getCompany, createShareCancel } from '../../helpers/backend_helper';
 import './ShareCancelPage.css';
 
@@ -31,14 +32,13 @@ const mkCancelRow = (txn) => ({
 
 // ── Club Cancel Panel ─────────────────────────────────────────────────────────
 const ClubCancelPanel = ({
-  sourceTxns,
+  sourceTxns, allTxns, excludedIds, onToggleSource, holderName,
   cancelShares, onChangeCancelShares,
   newCertNo, onChangeCertNo,
   remCash, remOC, remNoConsid,
   showModal, onShowModal, onSaveModal,
 }) => {
   const totalShares = sourceTxns.reduce((s, t) => s + Number(t.no_of_shares || 0), 0);
-  const totalIssued = sourceTxns.reduce((s, t) => s + Number(t.issued_share_capital || 0), 0);
   const totalPaidup = sourceTxns.reduce((s, t) => s + Number(t.paidup_share_capital || 0), 0);
   const perShare    = totalShares > 0 ? totalPaidup / totalShares : 0;
 
@@ -57,51 +57,11 @@ const ClubCancelPanel = ({
   const initCash   = remIsUnset ? balPaid : Number(remCash||0);
 
   return (
+    <>
+    <ClubSourceTable txns={allTxns} excludedIds={excludedIds} onToggle={onToggleSource} holderName={holderName} />
     <div className="scp-club-card">
-      {/* Source certs table */}
-      <div className="scp-section-hdr scp-section-hdr--cancel" style={{ marginBottom: 10 }}>
-        <i className="ri-stack-line" /> Source Certificates — Club Pool ({sourceTxns.length} cert{sourceTxns.length !== 1 ? 's' : ''})
-      </div>
-      <div className="scp-club-table-wrap">
-        <table className="scp-club-table">
-          <thead>
-            <tr>
-              <th>Cert No.</th>
-              <th>Folio No.</th>
-              <th className="th-right">Per Share</th>
-              <th className="th-right">No. of Shares</th>
-              <th className="th-right">Issued Capital</th>
-              <th className="th-right">Paid-up Capital</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sourceTxns.map(t => (
-              <tr key={t.share_transaction_id}>
-                <td>{t.share_cert_no || '—'}</td>
-                <td>{t.folio_no || '—'}</td>
-                <td className="th-right">{fmt2(t.per_share)}</td>
-                <td className="th-right">{fmtNum(t.no_of_shares, 0)}</td>
-                <td className="th-right">{fmt2(t.issued_share_capital)}</td>
-                <td className="th-right">{fmt2(t.paidup_share_capital)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="scp-club-total-row">
-              <td colSpan={2}><strong>Total</strong></td>
-              <td className="th-right scp-club-ps-cell">
-                <span className="scp-club-ps-badge">{fmt2(perShare)}<span className="scp-club-ps-note"> (wtd avg)</span></span>
-              </td>
-              <td className="th-right"><strong>{fmtNum(totalShares, 0)}</strong></td>
-              <td className="th-right"><strong>{fmt2(totalIssued)}</strong></td>
-              <td className="th-right"><strong>{fmt2(totalPaidup)}</strong></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
       {/* Cancel inputs */}
-      <div className="scp-section-hdr scp-section-hdr--cancel" style={{ marginTop: 16 }}>
+      <div className="scp-section-hdr scp-section-hdr--cancel">
         <i className="ri-scissors-cut-line" /> Cancelled Portion
       </div>
       <div className="scp-cancel-fields">
@@ -206,6 +166,7 @@ const ClubCancelPanel = ({
         />
       )}
     </div>
+    </>
   );
 };
 
@@ -417,7 +378,7 @@ const ShareCancelPage = () => {
   const navigate       = useNavigate();
   const { state }      = useLocation();
 
-  const sourceTxns = state?.txns || (state?.txn ? [state.txn] : []);
+  const allTxns = state?.txns || (state?.txn ? [state.txn] : []);
 
   const [company, setCompany] = useState(state?.company || null);
   const [share]               = useState(state?.share   || null);
@@ -427,12 +388,19 @@ const ShareCancelPage = () => {
   const [cancelNo,          setCancelNo]          = useState('');
   const [cancelDate,        setCancelDate]        = useState('');
   const [remarks,           setRemarks]           = useState('');
-  const [affectsCompany,    setAffectsCompany]    = useState(true);
 
-  const [cancelRows, setCancelRows] = useState(() => sourceTxns.map(mkCancelRow));
+  const [cancelRows, setCancelRows] = useState(() => allTxns.map(mkCancelRow));
 
   // Cancel mode: 'separate' (one card per cert) | 'club' (pooled)
   const [cancelMode, setCancelMode] = useState('separate');
+
+  // Club: certs the user unticked in the source table — left out of the pool
+  const [clubExcluded, setClubExcluded] = useState([]);
+  const toggleClubSource = useCallback((id) =>
+    setClubExcluded(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
+  const sourceTxns = cancelMode === 'club'
+    ? allTxns.filter(t => !clubExcluded.includes(t.share_transaction_id))
+    : allTxns;
 
   // Club cancel state
   const [clubCancelShares, setClubCancelShares] = useState('');
@@ -458,7 +426,7 @@ const ShareCancelPage = () => {
   useEffect(() => { load(); }, [load]);
 
   const companyName = company?.name || '—';
-  const firstTxn    = sourceTxns[0];
+  const firstTxn    = allTxns[0];
   const currency    = share?.currency || firstTxn?.company_share?.currency || '—';
   const shareType   = SHARE_TYPE_LABELS[share?.share_type || firstTxn?.share_type] || '—';
   const scType      = share?.share_class?.sc_type || firstTxn?.share_class?.sc_type || '';
@@ -481,6 +449,7 @@ const ShareCancelPage = () => {
     setSaving(true);
     try {
       if (cancelMode === 'club') {
+        if (sourceTxns.length < 2) { toast.error('Select at least 2 certificates for a club cancel'); setSaving(false); return; }
         if (!clubCancelQty || clubCancelQty <= 0) { toast.error('Shares to cancel is required'); setSaving(false); return; }
         if (clubCancelQty > totalSrcShares) { toast.error(`Cannot cancel more than ${totalSrcShares} shares`); setSaving(false); return; }
         if (clubBalQty > 0 && !clubNewCertNo.trim()) { toast.error('New cert no. is required when shares remain'); setSaving(false); return; }
@@ -547,7 +516,7 @@ const ShareCancelPage = () => {
           cancel_no:              cancelNo || null,
           cancel_date:            cancelDate,
           remarks:                remarks.trim() || null,
-          affects_company_shares: affectsCompany ? 1 : 0,
+          affects_company_shares: 0,
           cancel_mode:            'separate',
           items,
         });
@@ -572,7 +541,7 @@ const ShareCancelPage = () => {
     );
   }
 
-  if (!sourceTxns.length) {
+  if (!allTxns.length) {
     return (
       <div className="page-content">
         <Container fluid>
@@ -591,7 +560,7 @@ const ShareCancelPage = () => {
           currency={currency}
           shareType={shareType}
           scType={scType}
-          actionLabel={`Cancel · ${sourceTxns.length} cert${sourceTxns.length !== 1 ? 's' : ''}`}
+          actionLabel={`Cancel · ${allTxns.length} cert${allTxns.length !== 1 ? 's' : ''}`}
           actionIcon="ri-scissors-cut-line"
           actionVariant="cancel"
           onBack={() => navigate(-1)}
@@ -611,7 +580,7 @@ const ShareCancelPage = () => {
             </div>
             <div className="scp-field-group">
               <label className="scp-lbl">Cancellation Date <span className="scp-req">*</span></label>
-              <DatePickerInput value={cancelDate} onChange={setCancelDate} placeholder="DD/MM/YYYY" />
+              <DatePickerInput value={cancelDate} onChange={e => setCancelDate(e.target.value)} placeholder="DD/MM/YYYY" />
             </div>
             <div className="scp-field-group scp-field-group--remarks">
               <label className="scp-lbl">Remarks</label>
@@ -622,27 +591,6 @@ const ShareCancelPage = () => {
                 placeholder="Optional notes"
               />
             </div>
-            {cancelMode !== 'club' && (
-              <div className="scp-field-group">
-                <label className="scp-lbl">Cancellation Type</label>
-                <div className="scp-type-tabs">
-                  <button
-                    type="button"
-                    className={`scp-type-tab${affectsCompany ? ' scp-type-tab--active' : ''}`}
-                    onClick={() => setAffectsCompany(true)}
-                  >
-                    <i className="ri-building-line" /> Affects Company Shares
-                  </button>
-                  <button
-                    type="button"
-                    className={`scp-type-tab${!affectsCompany ? ' scp-type-tab--active' : ''}`}
-                    onClick={() => setAffectsCompany(false)}
-                  >
-                    <i className="ri-building-line" /> Not Affecting
-                  </button>
-                </div>
-              </div>
-            )}
             <div className="scp-field-group">
               <label className="scp-lbl">Cancel Mode</label>
               <div className="scp-mode-pills">
@@ -667,6 +615,10 @@ const ShareCancelPage = () => {
         {cancelMode === 'club' ? (
           <ClubCancelPanel
             sourceTxns={sourceTxns}
+            allTxns={allTxns}
+            excludedIds={clubExcluded}
+            onToggleSource={toggleClubSource}
+            holderName={holderName}
             cancelShares={clubCancelShares}
             onChangeCancelShares={setClubCancelShares}
             newCertNo={clubNewCertNo}

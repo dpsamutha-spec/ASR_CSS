@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 import useCollapseSidebar from '../../hooks/useCollapseSidebar';
 import DatePickerInput from '../../Components/Common/DatePickerInput';
 import SharePageStrip from '../../Components/Common/SharePageStrip';
+import ClubSourceTable from '../../Components/Common/ClubSourceTable';
 import {
   getCompany, getOfficialList, createShareDissolve,
 } from '../../helpers/backend_helper';
@@ -251,7 +252,7 @@ const ShareDissolvePage = () => {
   const navigate       = useNavigate();
   const { state }      = useLocation();
 
-  const sourceTxns = state?.txns || (state?.txn ? [state.txn] : []);
+  const allTxns = state?.txns || (state?.txn ? [state.txn] : []);
 
   const [company,      setCompany]      = useState(state?.company || null);
   const [share]                         = useState(state?.share   || null);
@@ -263,9 +264,17 @@ const ShareDissolvePage = () => {
   const [dissolveDate, setDissolveDate] = useState('');
   const [dissolveType, setDissolveType] = useState('separate');
 
+  // Club: certs the user unticked in the source table — left out of the pool
+  const [clubExcluded, setClubExcluded] = useState([]);
+  const toggleClubSource = useCallback((id) =>
+    setClubExcluded(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
+  const sourceTxns = dissolveType === 'club'
+    ? allTxns.filter(t => !clubExcluded.includes(t.share_transaction_id))
+    : allTxns;
+
   // Separate dissolve: teeGroups mirrors price groups, each with own transferees
   const [teeGroups, setTeeGroups] = useState(() =>
-    computePriceGroups(sourceTxns).map(g => ({ ...g, transferees: [mkTransferee()] }))
+    computePriceGroups(allTxns).map(g => ({ ...g, transferees: [mkTransferee()] }))
   );
 
   const updateTransferee = useCallback((groupIdx, teeId, changes) =>
@@ -284,7 +293,7 @@ const ShareDissolvePage = () => {
     })), []);
 
   // Club dissolve state
-  const defaultPS = Number(sourceTxns[0]?.per_share || 0);
+  const defaultPS = Number(allTxns[0]?.per_share || 0);
   const [clubTransferees, setClubTransferees] = useState([mkTransferee(defaultPS)]);
 
   const updateClubTee = useCallback((teeId, changes) =>
@@ -327,7 +336,7 @@ const ShareDissolvePage = () => {
   useEffect(() => { load(); }, [load]);
 
   const companyName    = company?.name || '—';
-  const firstTxn       = sourceTxns[0];
+  const firstTxn       = allTxns[0];
   const currency       = share?.currency || firstTxn?.company_share?.currency || '—';
   const shareType      = SHARE_TYPE_LABELS[share?.share_type || firstTxn?.share_type] || '—';
   const scType         = share?.share_class?.sc_type || firstTxn?.share_class?.sc_type || '';
@@ -357,6 +366,7 @@ const ShareDissolvePage = () => {
 
     if (dissolveType === 'club') {
       // ── Club validation ──────────────────────────────────────────────────
+      if (sourceTxns.length < 2) { toast.error('Select at least 2 certificates for a club dissolve'); return; }
       for (let i = 0; i < clubTransferees.length; i++) {
         const t = clubTransferees[i];
         const label = `Transferee ${i + 1}`;
@@ -455,7 +465,7 @@ const ShareDissolvePage = () => {
           currency={currency}
           shareType={shareType}
           scType={scType}
-          actionLabel={`Dissolve · ${sourceTxns.length} cert${sourceTxns.length !== 1 ? 's' : ''}`}
+          actionLabel={`Dissolve · ${allTxns.length} cert${allTxns.length !== 1 ? 's' : ''}`}
           actionIcon="ri-user-shared-line"
           actionVariant="dissolve"
           onBack={() => navigate(`/company/${entity_id}/shares/shareholder-register`)}
@@ -494,18 +504,6 @@ const ShareDissolvePage = () => {
 
           <div className="sdp-body">
 
-            {/* Transferor info bar */}
-            <div className="sdp-transferor-bar">
-              <i className="ri-user-line" />
-              <span className="sdp-transferor-bar-lbl">Transferor</span>
-              <strong>{transferorName}</strong>
-              <span className="sdp-transferor-bar-sep" />
-              <span className="sdp-transferor-bar-meta">{sourceTxns.length} cert{sourceTxns.length !== 1 ? 's' : ''} · {fmtNum(totalSource)} shares total</span>
-              {dissolveType === 'separate' && (
-                <span className="sdp-sep-badge"><i className="ri-information-line" /> Separate Dissolve: {sourceTxns.length} transferees required</span>
-              )}
-            </div>
-
             {/* ── Separate Dissolve: one card per price group ── */}
             {dissolveType === 'separate' && teeGroups.map((g, gi) => {
               const groupAllocated = g.transferees.reduce((s, t) => s + (Number(t.noOfShares) || 0), 0);
@@ -528,7 +526,7 @@ const ShareDissolvePage = () => {
                   </div>
                   <div className="sdp-pg-cols">
                     <div className="sdp-pg-left">
-                      <div className="sdp-pg-left-hdr"><i className="ri-file-list-3-line" /> Transferor</div>
+                      <div className="sdp-pg-left-hdr"><i className="ri-file-list-3-line" /> Transferor · {transferorName}</div>
                       <table className="sdp-src-tbl">
                         <thead>
                           <tr>
@@ -584,7 +582,10 @@ const ShareDissolvePage = () => {
               );
             })}
 
-            {/* ── Club Dissolve: single pooled card ── */}
+            {/* ── Club Dissolve: pick source certs, then single pooled card ── */}
+            {dissolveType === 'club' && (
+              <ClubSourceTable txns={allTxns} excludedIds={clubExcluded} onToggle={toggleClubSource} holderName={transferorName} />
+            )}
             {dissolveType === 'club' && (() => {
               const isDone = clubRemaining === 0;
               const isOver = clubRemaining < 0;
@@ -607,7 +608,7 @@ const ShareDissolvePage = () => {
                   <div className="sdp-pg-cols">
                     {/* LEFT — all source certs combined */}
                     <div className="sdp-pg-left">
-                      <div className="sdp-pg-left-hdr"><i className="ri-file-list-3-line" /> Transferor</div>
+                      <div className="sdp-pg-left-hdr"><i className="ri-file-list-3-line" /> Transferor · {transferorName}</div>
                       <table className="sdp-src-tbl">
                         <thead>
                           <tr>

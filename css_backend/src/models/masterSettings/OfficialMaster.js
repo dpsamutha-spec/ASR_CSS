@@ -59,6 +59,12 @@ module.exports = (sequelize, DataTypes) => {
                 defaultValue: 0,
                 comment: '0 = No, 1 = Yes',
             },
+            is_default: {
+                type: DataTypes.TINYINT(1),
+                allowNull: false,
+                defaultValue: 0,
+                comment: '1 = system default sub role (not deletable / renameable)',
+            },
              is_active : {
                 type: DataTypes.INTEGER.UNSIGNED,
                 allowNull: false,

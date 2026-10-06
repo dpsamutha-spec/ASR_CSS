@@ -37,24 +37,41 @@ const OfficialSubRole = () => {
       label:       'Sub Role Name',
       sortable:    true,
       gridPrimary: true,
+      width:       '340px',
+      // Default (system) sub roles get a small badge next to the name
+      // Long names are cut with "…" (full name on hover) so the table doesn't scroll sideways
+      render:      row => (
+        <span style={{ display: 'inline-flex', alignItems: 'center', maxWidth: 310 }}>
+          <span
+            title={row.official_master_name}
+            style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0 }}
+          >
+            {row.official_master_name}
+          </span>
+          {!!row.is_default && <span className="badge bg-primary-subtle text-primary ms-2 flex-shrink-0">Default</span>}
+        </span>
+      ),
     },
     {
       key:        'parent_name',
       label:      'Parent Official',
       sortable:   true,
       showInGrid: true,
+      width:      '180px',
     },
     {
       key:        'official_order',
       label:      'Order',
       sortable:   true,
       showInGrid: true,
+      width:      '100px',
     },
     {
       key:        'status_label',
       label:      'Status',
       sortable:   false,
       showInGrid: true,
+      width:      '120px',
       badge:      true,
       badgeMap:   { Active: 'success', Inactive: 'danger' },
     },
@@ -83,6 +100,8 @@ const OfficialSubRole = () => {
       name:        'official_master_name',
       label:       'Sub Role Name',
       placeholder: 'Enter Sub Role Name',
+      // Default (system) sub roles: name is fixed — dates reference the slug
+      disabled:    (values, editItem) => !!editItem?.is_default,
       validation:  Yup.string()
         .min(2).max(150)
         .required('Sub role name is required'),
@@ -92,6 +111,7 @@ const OfficialSubRole = () => {
       label:      'Parent Official',
       type:       'select',
       options:    parentOptions,
+      disabled:   (values, editItem) => !!editItem?.is_default,
       validation: Yup.number()
         .required('Parent official is required')
         .min(1, 'Please select a parent official'),
@@ -252,6 +272,7 @@ const OfficialSubRole = () => {
       onAdd={handleAdd}
       onEdit={handleEdit}
       onDelete={handleDelete}
+      canDelete={row => !row.is_default}   // default sub roles cannot be deleted
       onFieldChange={handleFieldChange} // ✅ fallback field change handler
     />
   );

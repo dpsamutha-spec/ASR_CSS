@@ -603,6 +603,13 @@ export const retainDissolveShareTxn    = (id)   => api.create(`${url.SHARE_TXN_R
 export const retainBuybackShareTxn       = (id)   => api.create(`${url.SHARE_TXN_RETAIN_BUYBACK}/${id}`,  {});
 export const createShareReplacement      = (data) => api.create(url.SHARE_TXN_REPLACEMENT, data);
 export const retainReplacementShareTxn   = (id)   => api.create(`${url.SHARE_TXN_RETAIN_REPLACEMENT}/${id}`, {});
+export const createShareSplit            = (data) => api.create(url.SHARE_TXN_SPLIT, data);
+export const retainSplitShareTxn         = (id)   => api.create(`${url.SHARE_TXN_RETAIN_SPLIT}/${id}`, {});
+export const createShareCombine          = (data) => api.create(url.SHARE_TXN_COMBINE, data);
+export const retainCombineShareTxn       = (id)   => api.create(`${url.SHARE_TXN_RETAIN_COMBINE}/${id}`, {});
+export const createShareReclassification = (data) => api.create(url.SHARE_TXN_RECLASS, data);
+export const retainReclassShareTxn       = (id)   => api.create(`${url.SHARE_TXN_RETAIN_RECLASS}/${id}`, {});
+export const checkShareFolioNo           = (params) => api.get(url.SHARE_TXN_FOLIO_CHECK, params);
 export const checkReplacementCert            = (params) => api.get(url.SHARE_TXN_REPLACEMENT_CHECK, params);
 export const listCompatibleReplacementCerts  = (params) => api.get(url.SHARE_TXN_REPLACEMENT_COMPAT, params);
 export const getShareholderHistory    = (officialEntityId, entityId) => api.get(`${url.SHARE_TXN_SH_HISTORY}/${officialEntityId}`, { entity_id: entityId });

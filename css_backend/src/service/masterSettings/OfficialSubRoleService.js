@@ -151,6 +151,7 @@ class OfficialSubRoleService {
             );
 
             body.is_deleted    = false;
+            body.is_default    = 0;
             body.updated_date  = new Date();
 
             const data = await this.officialMasterDao.create(body);
@@ -208,6 +209,19 @@ class OfficialSubRoleService {
                     'Official sub role not found'
                 );
             }
+
+            // Default sub roles: name, slug and parent are fixed (dates reference the slug)
+            if (oldData.is_default) {
+                if (body.official_master_name && body.official_master_name !== oldData.official_master_name) {
+                    return responseHandler.returnError(
+                        httpStatus.BAD_REQUEST,
+                        'Default sub roles cannot be renamed'
+                    );
+                }
+                delete body.official_master_slug;
+                delete body.is_parent;
+            }
+            delete body.is_default;
 
             if (
                 body.official_master_name &&
@@ -269,6 +283,13 @@ class OfficialSubRoleService {
                 return responseHandler.returnError(
                     httpStatus.BAD_REQUEST,
                     'Official sub role not found'
+                );
+            }
+
+            if (oldData.is_default) {
+                return responseHandler.returnError(
+                    httpStatus.BAD_REQUEST,
+                    'Default sub roles cannot be deleted'
                 );
             }
 

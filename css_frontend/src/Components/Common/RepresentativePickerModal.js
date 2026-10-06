@@ -72,7 +72,13 @@ const css = `
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
-const RepresentativePickerModal = ({ isOpen, onClose, onSelect, officials = [], loading = false, excludeIds = [] }) => {
+// title / nameLabel / emptyText let other official pickers reuse this modal
+// (e.g. choosing the principal director for "Alternate Director To")
+const RepresentativePickerModal = ({
+  isOpen, onClose, onSelect, officials = [], loading = false, excludeIds = [],
+  title = 'Select Representative', nameLabel = 'Representative',
+  emptyText = 'No representatives saved for this entity yet.',
+}) => {
   const [search, setSearch] = useState('');
   const [sel,    setSel]    = useState(null);
   const [page,   setPage]   = useState(1);
@@ -113,7 +119,7 @@ const RepresentativePickerModal = ({ isOpen, onClose, onSelect, officials = [], 
       <Modal isOpen={isOpen} toggle={onClose} centered size="lg">
         <ModalHeader toggle={onClose} style={{ fontSize: 14, fontWeight: 700 }}>
           <i className="ri-user-star-line me-2" style={{ color: '#405189' }}></i>
-          Select Representative
+          {title}
         </ModalHeader>
 
         <div className="elm-toolbar">
@@ -138,7 +144,7 @@ const RepresentativePickerModal = ({ isOpen, onClose, onSelect, officials = [], 
           ) : filtered.length === 0 ? (
             <div className="elm-state">
               <i className="ri-user-search-line"></i>
-              <p>{search ? `No results for "${search}"` : 'No representatives saved for this entity yet.'}</p>
+              <p>{search ? `No results for "${search}"` : emptyText}</p>
             </div>
           ) : (
             <div className="elm-table-wrap">
@@ -146,7 +152,7 @@ const RepresentativePickerModal = ({ isOpen, onClose, onSelect, officials = [], 
                 <thead>
                   <tr>
                     <th style={{ width: 30 }}></th>
-                    <th>Representative</th>
+                    <th>{nameLabel}</th>
                     <th>Type</th>
                     <th>ID / UEN</th>
                   </tr>

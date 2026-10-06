@@ -23,6 +23,9 @@ import ShareDissolvePage          from '../pages/Shares/ShareDissolvePage';
 import ShareCancelPage            from '../pages/Shares/ShareCancelPage';
 import ShareBuybackPage           from '../pages/Shares/ShareBuybackPage';
 import ShareReplacementPage       from '../pages/Shares/ShareReplacementPage';
+import ShareSplitPage             from '../pages/Shares/ShareSplitPage';
+import ShareCombinePage           from '../pages/Shares/ShareCombinePage';
+import ShareReclassificationPage  from '../pages/Shares/ShareReclassificationPage';
 
 //Individual
 import Individual from '../pages/Individual';
@@ -134,6 +137,9 @@ const authProtectedRoutes = [
   { path: '/company/:entity_id/shares/shareholder-register/cancel',           component: <ShareCancelPage /> },
   { path: '/company/:entity_id/shares/shareholder-register/buyback',          component: <ShareBuybackPage /> },
   { path: '/company/:entity_id/shares/shareholder-register/replacement',      component: <ShareReplacementPage /> },
+  { path: '/company/:entity_id/shares/shareholder-register/split',            component: <ShareSplitPage /> },
+  { path: '/company/:entity_id/shares/shareholder-register/combine',          component: <ShareCombinePage /> },
+  { path: '/company/:entity_id/shares/shareholder-register/reclassification', component: <ShareReclassificationPage /> },
 
   //Charges
   { path: '/entity/register-charges-list',   component: <RegisterChargeList /> },

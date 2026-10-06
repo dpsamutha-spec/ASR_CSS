@@ -19,8 +19,12 @@
 .aop-browse-hint { font-size: 11.5px; color: #878a99; font-style: italic; }
 
 /* ── Date with radio — single row ────────────────────────────────────────── */
-.aop-date-grp   { margin-bottom: 12px; }
+.aop-date-grp   { margin-bottom: 8px; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--vz-border-color); transition: border-color .15s, background .15s; }
+.aop-date-grp:hover { border-color: #405189; background: rgba(64, 81, 137, .03); }
 .aop-date-row   { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+/* "Date" label + compact picker, right after the Proposed / Effective radios */
+.aop-date-pick  { display: flex; align-items: center; gap: 10px; margin-left: 12px; padding-left: 20px; border-left: 1px solid var(--vz-border-color); }
+.aop-date-pick .asr-date-picker-wrap { width: 170px; flex: 0 0 170px; }
 .aop-date-title { font-size: 12.5px; font-weight: 600; color: var(--vz-body-color); min-width: 160px; flex-shrink: 0; }
 .aop-date-title span { color: #f06548; }
 .aop-radio-group { display: flex; align-items: center; gap: 14px; flex-shrink: 0; }
@@ -32,9 +36,12 @@
 .aop-role-row:hover { border-color: #405189; background: rgba(64, 81, 137, .03); }
 .aop-role-row.chk   { border-color: #405189; background: rgba(64, 81, 137, .06); }
 .aop-role-row input[type=checkbox] { width: 15px; height: 15px; accent-color: #405189; flex-shrink: 0; cursor: pointer; }
-.aop-role-row-name  { font-size: 13px; font-weight: 600; color: var(--vz-body-color); min-width: 160px; flex: 1; cursor: pointer; user-select: none; }
-.aop-role-dates     { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.aop-role-row-name  { font-size: 13px; font-weight: 600; color: var(--vz-body-color); flex: 0 1 340px; min-width: 160px; cursor: pointer; user-select: none; }
+/* Dates sit right after the name (same pattern as the Date of Appointment rows), behind a divider */
+.aop-role-dates     { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding-left: 20px; border-left: 1px solid var(--vz-border-color); }
 .aop-role-date-lbl  { font-size: 11px; font-weight: 600; color: #878a99; white-space: nowrap; }
+/* Date pickers default to width:100% (asr-date-picker-wrap); keep them compact inline here */
+.aop-role-dates .asr-date-picker-wrap { width: 170px; flex: 0 0 170px; }
 
 /* ── Generic field label ─────────────────────────────────────────────────── */
 .aop-lbl { font-size: 10.5px; font-weight: 600; color: var(--vz-sidebar-sub-item-color, #878a99); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
@@ -43,7 +50,11 @@
 .aop-rep-fields { background: var(--vz-light, #f8f9fa); border: 1px solid var(--vz-border-color); border-radius: 9px; padding: 16px 18px; margin-top: 16px; }
 
 /* ── Sub-role saved records table ────────────────────────────────────────── */
-.aop-sr-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.aop-sr-table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
+/* Fixed columns: switching a row to edit (date pickers) must not resize the table */
+.aop-sr-table th:nth-child(2), .aop-sr-table th:nth-child(3) { width: 210px; }
+.aop-sr-table th:nth-child(4) { width: 140px; }
+.aop-sr-table .asr-date-picker-wrap { width: 180px; }
 .aop-sr-table th { font-size: 10.5px; font-weight: 700; color: #878a99; text-transform: uppercase; letter-spacing: .04em; padding: 7px 10px; border-bottom: 2px solid var(--vz-border-color); text-align: left; white-space: nowrap; }
 .aop-sr-table td { padding: 8px 10px; border-bottom: 1px solid var(--vz-border-color); vertical-align: middle; }
 .aop-sr-table tr:last-child td { border-bottom: none; }
@@ -90,3 +101,25 @@
 [data-bs-theme="dark"] .aop-entity-hero   { background: var(--vz-card-bg); }
 [data-bs-theme="dark"] .aop-entity-list-btn { background: rgba(64,81,137,.18); border-color: rgba(64,81,137,.35); color: #8fa3d4; }
 [data-bs-theme="dark"] .aop-entity-list-btn:hover { background: #405189; color: #fff; }
+
+/* ── Linked officials — one card per type ── */
+.aop-lo-groups { display: grid; grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); gap: 14px; }
+.aop-lo-group  { border: 1px solid var(--vz-border-color); border-top: 3px solid var(--lo-color); border-radius: 10px; overflow: hidden; background: var(--vz-card-bg, #fff); }
+.aop-lo-group-hdr   { display: flex; align-items: center; gap: 8px; padding: 9px 14px; background: var(--vz-light, #f8f9fa); border-bottom: 1px solid var(--vz-border-color); }
+.aop-lo-group-icon  { width: 26px; height: 26px; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; color: var(--lo-color); background: color-mix(in srgb, var(--lo-color) 12%, transparent); font-size: 14px; }
+.aop-lo-group-title { font-size: 12.5px; font-weight: 700; color: var(--vz-body-color); flex: 1; }
+.aop-lo-group-count { font-size: 11px; font-weight: 700; color: #fff; background: var(--lo-color); border-radius: 10px; min-width: 20px; height: 20px; padding: 0 6px; display: inline-flex; align-items: center; justify-content: center; }
+.aop-lo-row    { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--vz-border-color); transition: background .15s; }
+.aop-lo-row:last-child { border-bottom: none; }
+.aop-lo-row:hover      { background: rgba(64, 81, 137, .03); }
+.aop-lo-row.confirming { background: rgba(240, 101, 72, .06); }
+.aop-lo-avatar { width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; color: var(--lo-color); background: color-mix(in srgb, var(--lo-color) 12%, transparent); }
+.aop-lo-info   { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.aop-lo-name   { font-size: 13px; font-weight: 600; color: var(--vz-body-color); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aop-lo-dates  { font-size: 11.5px; color: #878a99; }
+.aop-lo-dates i { font-size: 12px; vertical-align: -1px; }
+.aop-lo-ceased { color: #f06548; font-weight: 600; }
+.aop-lo-confirm { font-size: 11.5px; font-weight: 600; color: #f06548; margin-right: 2px; }
+.aop-lo-add   { margin-left: 6px; display: inline-flex; align-items: center; gap: 3px; height: 26px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--lo-color); background: transparent; color: var(--lo-color); font-size: 11.5px; font-weight: 600; cursor: pointer; transition: background .15s, color .15s; }
+.aop-lo-add:hover { background: var(--lo-color); color: #fff; }
+.aop-lo-empty { padding: 14px; font-size: 12px; font-style: italic; color: #878a99; text-align: center; }

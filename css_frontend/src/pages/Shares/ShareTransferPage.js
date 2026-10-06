@@ -6,6 +6,7 @@ import { toast } from 'react-toastify';
 import useCollapseSidebar from '../../hooks/useCollapseSidebar';
 import DatePickerInput from '../../Components/Common/DatePickerInput';
 import SharePageStrip from '../../Components/Common/SharePageStrip';
+import ClubSourceTable from '../../Components/Common/ClubSourceTable';
 import {
   getCompany, getShareTxn, getShareTxnList, getOfficialList, createShareTransfer, createShareClubTransfer,
 } from '../../helpers/backend_helper';
@@ -832,6 +833,12 @@ const ShareTransferPage = () => {
 
   const isClubMode = transferMode === 'club' && blocks.length > 1;
 
+  // Club: certs the user unticked in the source table — left out of the pool
+  const [clubExcluded, setClubExcluded] = useState([]);
+  const toggleClubSource = useCallback((id) =>
+    setClubExcluded(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
+  const clubBlocks = blocks.filter(b => !clubExcluded.includes(b.txn?.share_transaction_id));
+
   // Fetch transferee's existing VALID holdings when transferee selection changes
   useEffect(() => {
     if (!transfereeId || shareholders.length === 0) { setTransfereeCerts([]); return; }
@@ -995,8 +1002,9 @@ const ShareTransferPage = () => {
     }
     if (!clubState.transfereeCertNo?.trim()) { toast.error('Transferee Cert No. is required'); return; }
     if (!clubState.transfereeFolioNo?.trim()) { toast.error('Transferee Folio No. is required'); return; }
+    if (clubBlocks.length < 2) { toast.error('Select at least 2 certificates for a club transfer'); return; }
 
-    const totalShares = blocks.reduce((s, b) => s + Number(b.txn?.no_of_shares || 0), 0);
+    const totalShares = clubBlocks.reduce((s, b) => s + Number(b.txn?.no_of_shares || 0), 0);
     const teeQty = Number(clubState.transfereeQty);
     if (teeQty > totalShares) { toast.error(`Quantity (${teeQty}) exceeds pool total (${totalShares})`); return; }
 
@@ -1007,7 +1015,7 @@ const ShareTransferPage = () => {
 
       const payload = {
         entity_id:                    Number(entity_id),
-        source_txn_ids:               blocks.map(b => b.txn?.share_transaction_id).filter(Boolean),
+        source_txn_ids:               clubBlocks.map(b => b.txn?.share_transaction_id).filter(Boolean),
         transferee_official_id:       Number(transfereeId),
         transfer_date:                transferDate,
         transfer_no:                  transferNo || null,
@@ -1240,14 +1248,22 @@ const ShareTransferPage = () => {
         ) : (
           <>
             {isClubMode ? (
+              <>
+              <ClubSourceTable
+                txns={blocks.map(b => b.txn).filter(Boolean)}
+                excludedIds={clubExcluded}
+                onToggle={toggleClubSource}
+                holderName={firstTxn?.official_entity?.name}
+              />
               <ClubTransferPanel
-                blocks={blocks}
+                blocks={clubBlocks}
                 shareholders={shareholders}
                 transfereeId={transfereeId}
                 clubState={clubState}
                 onUpdate={updateClubState}
                 typeOfValue={typeOfValue}
               />
+              </>
             ) : (
             <>
             {(() => {

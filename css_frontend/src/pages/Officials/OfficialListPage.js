@@ -80,11 +80,24 @@ const ActButtons = ({ rec, slug, entity, officialTypes, showTypes = [], navigate
   const btnRef          = React.useRef();
   const menuRef         = React.useRef();
 
-  const effectiveShowTypes = showTypes.filter(st =>
-    st.key === 'nominator' && slug?.toLowerCase().includes('shareholder')
-      ? rec.shareholder_property_type === 'NOMINEE'
-      : true
+  // Nominator only for nominees: shareholders with NOMINEE property type, and
+  // directors holding an active "Nominee Director" sub role (appointed, not ceased)
+  // Alternate Director To only for directors holding an active "Alternate / Substitute Director" sub role
+  const today = new Date().toISOString().slice(0, 10);
+  const hasActiveSubRole = (subSlug) => (rec.date_records || []).some(d =>
+    d.official_master_slug === subSlug &&
+    d.appointment_date &&
+    (!d.ceased_date || String(d.ceased_date).slice(0, 10) > today)
   );
+  const effectiveShowTypes = showTypes.filter(st => {
+    const s = slug?.toLowerCase() || '';
+    if (st.key === 'nominator') {
+      if (s.includes('shareholder')) return rec.shareholder_property_type === 'NOMINEE';
+      if (s.includes('director'))    return hasActiveSubRole('nominee-director');
+    }
+    if (st.key === 'alternate-director-to') return hasActiveSubRole('alternate-substitute-director');
+    return true;
+  });
 
   React.useEffect(() => {
     if (!open) return;
@@ -148,11 +161,13 @@ const CHIP_ICON = {
   proxy:           'ri-shield-user-line',
   nominator:       'ri-user-star-line',
   representatives: 'ri-group-line',
+  'alternate-director-to': 'ri-user-shared-line',
 };
 const CHIP_SHORT = {
   proxy:           'Proxy',
   nominator:       'Nom.',
   representatives: 'Rep.',
+  'alternate-director-to': 'Alt. To',
 };
 
 const SubChips = ({ officialId, slug, showTypes, subMap, navigate }) => {
@@ -557,35 +572,37 @@ const OfficialListPage = () => {
   // sub-official count map: { [reference_official_id]: { [slug]: count } }
   const [subMap, setSubMap] = useState({});
 
-  // Resolve OT from master list when not passed in state
+  // Always refresh official types from the master list — the copy passed in
+  // navigation state / sessionStorage can be stale (e.g. a newly seeded sub-type)
   useEffect(() => {
-    if (resolvedOT) return;
     getOfficialMasterList({ page: 1, limit: 200, is_parent: 0, order: 'official_order:ASC' })
       .then(res => {
         const data  = res?.data?.data || res?.data || [];
         const found = data.find(item => item.official_master_slug === slug);
-        if (found) setResolvedOT({
+        if (found && !resolvedOT) setResolvedOT({
           id:               found.official_master_id,
           key:              found.official_master_slug,
           label:            found.official_master_name,
           isRepresentative: !!found.is_representative,
         });
-        if (!allTypes.length) {
-          setAllTypes(data.map((item, idx) => ({
+        if (!data.length) return;
+        setAllTypes(prev => data.map((item, idx) => {
+          const known = prev.find(p => p.key === item.official_master_slug);   // keep its icon / colour
+          return {
             id:               item.official_master_id,
             key:              item.official_master_slug,
             label:            item.official_master_name,
-            icon:             OT_ICONS[idx % OT_ICONS.length],
-            color:            OT_COLORS[idx % OT_COLORS.length],
-            light:            OT_COLORS[idx % OT_COLORS.length] + '1f',
+            icon:             known?.icon  || OT_ICONS[idx % OT_ICONS.length],
+            color:            known?.color || OT_COLORS[idx % OT_COLORS.length],
+            light:            known?.light || OT_COLORS[idx % OT_COLORS.length] + '1f',
             isRepresentative: !!item.is_representative,
             isShow:           !!item.is_show,
             parentSlugs:      item.parent_slugs ? item.parent_slugs.split(',').map(s => s.trim()) : [],
-          })));
-        }
+          };
+        }));
       })
       .catch(() => {});
-  }, [slug, resolvedOT]); // eslint-disable-line
+  }, [slug]); // eslint-disable-line
 
   // Fetch officials for this type
   const fetchList = useCallback(async () => {

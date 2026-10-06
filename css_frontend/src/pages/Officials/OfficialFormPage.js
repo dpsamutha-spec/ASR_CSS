@@ -21,6 +21,8 @@ import {
   getOfficial,
   getCountriesList,
   getOfficialControllerDates,
+  getOfficialList,
+  deleteOfficial,
 } from '../../helpers/backend_helper';
 import OfficialContactSection, { BLANK_CONTACT, mapApiContact } from './OfficialContactSection';
 
@@ -37,6 +39,16 @@ const BLANK_DATES = {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 const SEC_COLORS = ['#405189', '#0ab39c', '#6559cc', '#f7b84b'];
+
+// Sub-official groups shown in "Linked Officials" (display order, label, icon, colour)
+const LINKED_TYPES = [
+  { slug: 'proxy',                 label: 'Proxy',                 icon: 'ri-shield-user-line', color: '#405189' },
+  { slug: 'nominator',             label: 'Nominator',             icon: 'ri-user-star-line',   color: '#0ab39c' },
+  { slug: 'alternate-director-to', label: 'Alternate Director To', icon: 'ri-user-shared-line', color: '#6559cc' },
+  { slug: 'representatives',       label: 'Representatives',       icon: 'ri-group-line',       color: '#f7b84b' },
+];
+const linkedTypeOf = (slug) =>
+  LINKED_TYPES.find(t => t.slug === slug) || { slug, label: slug, icon: 'ri-user-line', color: '#878a99' };
 
 const SecHead = ({ num, title }) => {
   const color = SEC_COLORS[(parseInt(num, 10) - 1) % SEC_COLORS.length];
@@ -68,10 +80,12 @@ const DateWithRadio = ({ title, required, typeKey, dateKey, vals, onChange, name
           </label>
         ))}
       </div>
-      <DatePickerInput
-        style={{ maxWidth: 190 }}
-        value={vals[dateKey]}
-        onChange={e => onChange(dateKey, e.target.value)} />
+      <div className="aop-date-pick">
+        <span className="aop-role-date-lbl">Date</span>
+        <DatePickerInput
+          value={vals[dateKey]}
+          onChange={e => onChange(dateKey, e.target.value)} />
+      </div>
     </div>
   </div>
 );
@@ -173,6 +187,12 @@ const OfficialFormPage = () => {
   const [controllerDates,   setControllerDates]   = useState({ appointmentDate: '', cessationDate: '' });
   const [controllerLoading, setControllerLoading] = useState(false);
 
+  // ── Linked officials (proxy / nominator / alternate director to / representatives) ──
+  const [linkedOfficials, setLinkedOfficials] = useState([]);
+  const [confirmDeleteId, setConfirmDeleteId] = useState(null);
+  const [deletingLinked,  setDeletingLinked]  = useState(false);
+  const [linkedTypes,     setLinkedTypes]     = useState([]);   // sub-official types that apply to this official type
+
   const [saving, setSaving] = useState(false);
   const skipETypeReset = React.useRef(false);
 
@@ -186,6 +206,75 @@ const OfficialFormPage = () => {
     date:       showContact ? 3 : 2,
     roles:      showContact ? 4 : 3,
     controller: showContact ? 5 : 4,
+    linked:     showContact ? 6 : 5,
+  };
+
+  // Load sub-officials linked to this official (edit mode)
+  const fetchLinkedOfficials = useCallback(() => {
+    if (!official_id) return;
+    getOfficialList({ reference_official_id: official_id, is_ref_id: 1, limit: 200 })
+      .then(res => {
+        const data = res?.data?.data || res?.data || [];
+        setLinkedOfficials(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setLinkedOfficials([]));
+  }, [official_id]);
+  useEffect(() => { fetchLinkedOfficials(); }, [fetchLinkedOfficials]);
+
+  // Sub-official types for this official type: hidden types whose parent_slugs include it,
+  // plus Representatives when the official type is a representative type
+  useEffect(() => {
+    if (!isEdit || !slug) return;
+    getOfficialMasterList({ page: 1, limit: 200, is_parent: 0 })
+      .then(res => {
+        const data  = res?.data?.data || res?.data || [];
+        const self  = data.find(m => m.official_master_slug === slug);
+        const types = data
+          .filter(m => !m.is_show && (m.parent_slugs || '').split(',').map(x => x.trim()).includes(slug))
+          .map(m => m.official_master_slug);
+        if (self?.is_representative) types.push('representatives');
+        setLinkedTypes([...new Set(types)]);
+      })
+      .catch(() => setLinkedTypes([]));
+  }, [isEdit, slug]);
+
+  // Some sub-officials need an active sub role on this official (appointed, not ceased)
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const hasActiveSubRole = (subSlug) => savedSubRoles.some(r =>
+    r.official_master_slug === subSlug && r.appointment_date &&
+    (!r.ceased_date || String(r.ceased_date).slice(0, 10) > todayStr)
+  );
+  const isLinkedTypeEligible = (childSlug) => {
+    if (childSlug === 'nominator' && slug === 'directors')       return hasActiveSubRole('nominee-director');
+    if (childSlug === 'alternate-director-to')                    return hasActiveSubRole('alternate-substitute-director');
+    return true;
+  };
+  const isActiveLinked = (rec) => {
+    const dr = (rec.date_records || []).find(d => d.is_main_role === '1') || rec.date_record || {};
+    return !dr.ceased_date || String(dr.ceased_date).slice(0, 10) > todayStr;
+  };
+  // Groups to show: eligible types (even if empty) + any type that already has records
+  const linkedGroups = [...new Set([
+    ...linkedTypes.filter(isLinkedTypeEligible),
+    ...linkedOfficials.map(r => r.official_master_slug),
+  ])].sort((a, b) => {
+    const ia = LINKED_TYPES.findIndex(t => t.slug === a);
+    const ib = LINKED_TYPES.findIndex(t => t.slug === b);
+    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
+  });
+
+  const removeLinkedOfficial = async (rec) => {
+    setDeletingLinked(true);
+    try {
+      await deleteOfficial(rec.official_id);
+      toast.success(`${rec.official_entity?.name || 'Official'} removed`);
+      setConfirmDeleteId(null);
+      fetchLinkedOfficials();
+    } catch {
+      toast.error('Failed to remove');
+    } finally {
+      setDeletingLinked(false);
+    }
   };
 
   // ── Effects ───────────────────────────────────────────────────────────────
@@ -1152,6 +1241,84 @@ const OfficialFormPage = () => {
             )}
           </CardBody>
         </Card>
+
+        {/* ══════════════════════════════════════════════════
+            SECTION — Linked Officials (edit mode, when any exist)
+        ══════════════════════════════════════════════════ */}
+        {isEdit && linkedGroups.length > 0 && (
+          <Card className="mb-3">
+            <CardBody>
+              <SecHead num={sectionNums.linked} title="Linked Officials" />
+              <div className="aop-lo-groups">
+                {linkedGroups.map(childSlug => {
+                    const type   = linkedTypeOf(childSlug);
+                    const rows   = linkedOfficials.filter(r => r.official_master_slug === childSlug);
+                    // Alternate Director To: one principal at a time
+                    const canAdd = isLinkedTypeEligible(childSlug) &&
+                      !(childSlug === 'alternate-director-to' && rows.some(isActiveLinked));
+                    return (
+                      <div key={childSlug} className="aop-lo-group" style={{ '--lo-color': type.color }}>
+                        <div className="aop-lo-group-hdr">
+                          <span className="aop-lo-group-icon"><i className={type.icon}></i></span>
+                          <span className="aop-lo-group-title">{type.label}</span>
+                          <span className="aop-lo-group-count">{rows.length}</span>
+                          {canAdd && (
+                            <button type="button" className="aop-lo-add" title={`Add ${type.label}`}
+                              onClick={() => navigate(
+                                `/officials/${slug}/${official_id}/${childSlug}/add`,
+                                { state: { returnTo: `/officials/${slug}/edit/${official_id}`, returnState: state } }
+                              )}>
+                              <i className="ri-add-line"></i> Add
+                            </button>
+                          )}
+                        </div>
+                        {rows.length === 0 && (
+                          <div className="aop-lo-empty">No {type.label.toLowerCase()} added yet.</div>
+                        )}
+                        {rows.map(rec => {
+                          const dr         = (rec.date_records || []).find(d => d.is_main_role === '1') || rec.date_record || {};
+                          const name       = rec.official_entity?.name || '—';
+                          const ceased     = dr.ceased_date?.slice(0, 10);
+                          const confirming = confirmDeleteId === rec.official_id;
+                          return (
+                            <div key={rec.official_id} className={`aop-lo-row${confirming ? ' confirming' : ''}`}>
+                              <span className="aop-lo-avatar">{name.charAt(0).toUpperCase()}</span>
+                              <div className="aop-lo-info">
+                                <span className="aop-lo-name" title={name}>{name}</span>
+                                <span className="aop-lo-dates">
+                                  <i className="ri-calendar-check-line"></i> Appointed {dr.appointment_date?.slice(0, 10) || '—'}
+                                  {ceased && <span className="aop-lo-ceased"> · Ceased {ceased}</span>}
+                                </span>
+                              </div>
+                              {confirming ? (
+                                <div className="aop-act-wrap">
+                                  <span className="aop-lo-confirm">Remove?</span>
+                                  <button className="aop-act save" title="Confirm remove" disabled={deletingLinked}
+                                    onClick={() => removeLinkedOfficial(rec)}><i className="ri-check-line"></i></button>
+                                  <button className="aop-act cancel" title="Cancel" disabled={deletingLinked}
+                                    onClick={() => setConfirmDeleteId(null)}><i className="ri-close-line"></i></button>
+                                </div>
+                              ) : (
+                                <div className="aop-act-wrap">
+                                  <button className="aop-act edit" title="Edit"
+                                    onClick={() => navigate(
+                                      `/officials/${slug}/${official_id}/${childSlug}/edit/${rec.official_id}`,
+                                      { state: { returnTo: `/officials/${slug}/edit/${official_id}`, returnState: state } }
+                                    )}><i className="ri-pencil-line"></i></button>
+                                  <button className="aop-act delete" title="Remove"
+                                    onClick={() => setConfirmDeleteId(rec.official_id)}><i className="ri-delete-bin-line"></i></button>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+              </div>
+            </CardBody>
+          </Card>
+        )}
 
         {/* ── Action buttons ── */}
         <div className="d-flex justify-content-end gap-2 mb-4">

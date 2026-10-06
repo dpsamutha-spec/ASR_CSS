@@ -164,6 +164,85 @@ class ShareController {
         }
     };
 
+    createSplit = async (req, res) => {
+        try {
+            const userId = req.user?.user_id;
+            const result = await this.service.createSplit(req.body, userId);
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
+    createCombine = async (req, res) => {
+        try {
+            const userId = req.user?.user_id;
+            const result = await this.service.createCombine(req.body, userId);
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
+    retainCombine = async (req, res) => {
+        try {
+            const userId = req.user?.user_id;
+            const result = await this.service.retainCombine(req.params.id, userId);
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
+    createReclassification = async (req, res) => {
+        try {
+            const userId = req.user?.user_id;
+            const result = await this.service.createReclassification(req.body, userId);
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
+    retainReclassification = async (req, res) => {
+        try {
+            const userId = req.user?.user_id;
+            const result = await this.service.retainReclassification(req.params.id, userId);
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
+    checkFolioNo = async (req, res) => {
+        try {
+            const result = await this.service.checkFolioNo({
+                entity_id: req.query.entity_id,
+                folio_no:  req.query.folio_no,
+            });
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
+    retainSplit = async (req, res) => {
+        try {
+            const userId = req.user?.user_id;
+            const result = await this.service.retainSplit(req.params.id, userId);
+            res.status(result.statusCode).send(result.response);
+        } catch (e) {
+            logger.error(e);
+            res.status(httpStatus.BAD_GATEWAY).send(e);
+        }
+    };
+
     listCompatibleReplacementCerts = async (req, res) => {
         try {
             const result = await this.service.listCompatibleReplacementCerts({

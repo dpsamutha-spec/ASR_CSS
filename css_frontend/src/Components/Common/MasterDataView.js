@@ -266,31 +266,36 @@ const MasterDataView = ({
                     <div className="d-flex align-items-center justify-content-between gap-2">
                         <h5 className="card-title mb-0 fs-14 flex-shrink-0">{title}</h5>
 
+                        {/* Toolbar — every control shares one height so they line up */}
                         <div className="d-flex align-items-center gap-2 flex-grow-1 justify-content-end">
                             <Button color="warning" size="sm"
-                                className="d-flex align-items-center gap-1 flex-shrink-0"
+                                className="d-flex align-items-center gap-1 flex-shrink-0 px-3"
+                                style={{ height: 34 }}
                                 onClick={() => tog_list(null)}>
-                                <i className="ri-add-line fs-14"></i> Add New
+                                <i className="ri-add-line"></i> Add New
                             </Button>
-                            <div className="search-box flex-shrink-0">
+                            <div className="search-box flex-shrink-0" style={{ width: 220 }}>
                                 <input
                                     type="text"
                                     className="form-control form-control-sm search"
+                                    style={{ height: 34 }}
                                     placeholder="Search..."
                                     value={searchTerm}
                                     onChange={e => setSearchTerm(e.target.value)}
                                 />
                                 <i className="ri-search-line search-icon"></i>
                             </div>
-                            <div className="d-flex gap-1 flex-shrink-0">
+                            <div className="btn-group flex-shrink-0" role="group" aria-label="View mode">
                                 <button
-                                    className={`btn btn-sm ${viewMode === 'list' ? 'btn-success' : 'btn-outline-success'}`}
+                                    className={`btn btn-sm d-flex align-items-center justify-content-center ${viewMode === 'list' ? 'btn-success' : 'btn-outline-success'}`}
+                                    style={{ height: 34, width: 36 }}
                                     title="List View"
                                     onClick={() => setViewMode('list')}>
                                     <i className="ri-list-unordered"></i>
                                 </button>
                                 <button
-                                    className={`btn btn-sm ${viewMode === 'grid' ? 'btn-success' : 'btn-outline-success'}`}
+                                    className={`btn btn-sm d-flex align-items-center justify-content-center ${viewMode === 'grid' ? 'btn-success' : 'btn-outline-success'}`}
+                                    style={{ height: 34, width: 36 }}
                                     title="Grid View"
                                     onClick={() => setViewMode('grid')}>
                                     <i className="ri-grid-fill"></i>
@@ -355,7 +360,8 @@ const MasterDataView = ({
                                                             whiteSpace: isTextWrapColumn(col) ? 'normal' : 'nowrap',
                                                             overflowWrap: isTextWrapColumn(col) ? 'break-word' : 'normal',
                                                         }}>
-                                                            {isColorColumn(col) ? (
+                                                            {/* col.render(row) — optional custom cell content */}
+                                                            {col.render ? col.render(row) : isColorColumn(col) ? (
                                                                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                                                                     <div style={{
                                                                         width: '24px', height: '24px', minWidth: '24px',
@@ -547,7 +553,7 @@ const MasterDataView = ({
                                                     onBlur={formik.handleBlur}
                                                     disabled={
                                                         typeof field.disabled === 'function'
-                                                            ? field.disabled(formik.values)
+                                                            ? field.disabled(formik.values, editItem)
                                                             : field.disabled || false
                                                     }
                                                     invalid={formik.touched[field.name] && !!formik.errors[field.name]}
@@ -571,7 +577,7 @@ const MasterDataView = ({
                                                 }
                                                 disabled={
                                                     typeof field.disabled === 'function'
-                                                        ? field.disabled(formik.values)
+                                                        ? field.disabled(formik.values, editItem)
                                                         : field.disabled || false
                                                 }
                                                 invalid={formik.touched[field.name] && !!formik.errors[field.name]}>
@@ -595,7 +601,7 @@ const MasterDataView = ({
                                                 }
                                                 disabled={
                                                     typeof field.disabled === 'function'
-                                                        ? field.disabled(formik.values)
+                                                        ? field.disabled(formik.values, editItem)
                                                         : field.disabled || false
                                                 }
                                                 onChange={(e) => handleFieldChange(e, field)}
@@ -614,7 +620,7 @@ const MasterDataView = ({
                                                 }
                                                 disabled={
                                                     typeof field.disabled === 'function'
-                                                        ? field.disabled(formik.values)
+                                                        ? field.disabled(formik.values, editItem)
                                                         : field.disabled || false
                                                 }
                                                 onChange={(e) => handleFieldChange(e, field)}
@@ -635,7 +641,7 @@ const MasterDataView = ({
                                                 }
                                                 disabled={
                                                     typeof field.disabled === 'function'
-                                                        ? field.disabled(formik.values)
+                                                        ? field.disabled(formik.values, editItem)
                                                         : field.disabled || false
                                                 }
                                                 invalid={formik.touched[field.name] && !!formik.errors[field.name]}
@@ -652,7 +658,7 @@ const MasterDataView = ({
                                                 }
                                                 disabled={
                                                     typeof field.disabled === 'function'
-                                                        ? field.disabled(formik.values)
+                                                        ? field.disabled(formik.values, editItem)
                                                         : field.disabled || false
                                                 }
                                                 onChange={(e) => handleFieldChange(e, field)}

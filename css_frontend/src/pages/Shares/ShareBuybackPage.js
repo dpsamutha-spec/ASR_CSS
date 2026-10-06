@@ -8,6 +8,7 @@ import { toast } from 'react-toastify';
 import useCollapseSidebar from '../../hooks/useCollapseSidebar';
 import DatePickerInput from '../../Components/Common/DatePickerInput';
 import SharePageStrip from '../../Components/Common/SharePageStrip';
+import ClubSourceTable from '../../Components/Common/ClubSourceTable';
 import { getCompany, createShareBuyback } from '../../helpers/backend_helper';
 import './ShareBuybackPage.css';
 
@@ -31,7 +32,7 @@ const mkBuybackRow = (txn) => ({
 
 // ── Club Buyback Panel ────────────────────────────────────────────────────────
 const ClubBuybackPanel = ({
-  sourceTxns,
+  sourceTxns, allTxns, excludedIds, onToggleSource, holderName,
   buybackShares, onChangeBuybackShares,
   newCertNo, onChangeCertNo,
   newFolioNo, onChangeFolioNo,
@@ -39,7 +40,6 @@ const ClubBuybackPanel = ({
   showModal, onShowModal, onSaveModal,
 }) => {
   const totalShares = sourceTxns.reduce((s, t) => s + Number(t.no_of_shares || 0), 0);
-  const totalIssued = sourceTxns.reduce((s, t) => s + Number(t.issued_share_capital || 0), 0);
   const totalPaidup = sourceTxns.reduce((s, t) => s + Number(t.paidup_share_capital || 0), 0);
   const perShare    = totalShares > 0 ? totalPaidup / totalShares : 0;
 
@@ -54,49 +54,10 @@ const ClubBuybackPanel = ({
   const remIsPaid  = !remNoConsid && balPaidup > 0 && remConsid >= balPaidup;
 
   return (
+    <>
+    <ClubSourceTable txns={allTxns} excludedIds={excludedIds} onToggle={onToggleSource} holderName={holderName} />
     <div className="sbp-club-card">
       <div className="sbp-section-hdr sbp-section-hdr--buy">
-        <i className="ri-stack-line" /> Source Certificates — Club Pool ({sourceTxns.length} cert{sourceTxns.length !== 1 ? 's' : ''})
-      </div>
-      <div className="sbp-club-table-wrap">
-        <table className="sbp-club-table">
-          <thead>
-            <tr>
-              <th>Cert No.</th>
-              <th>Folio No.</th>
-              <th className="th-right">Per Share</th>
-              <th className="th-right">No. of Shares</th>
-              <th className="th-right">Issued Capital</th>
-              <th className="th-right">Paid-up Capital</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sourceTxns.map(t => (
-              <tr key={t.share_transaction_id}>
-                <td>{t.share_cert_no || '—'}</td>
-                <td>{t.folio_no || '—'}</td>
-                <td className="th-right">{fmt2(t.per_share)}</td>
-                <td className="th-right">{fmtNum(t.no_of_shares, 0)}</td>
-                <td className="th-right">{fmt2(t.issued_share_capital)}</td>
-                <td className="th-right">{fmt2(t.paidup_share_capital)}</td>
-              </tr>
-            ))}
-          </tbody>
-          <tfoot>
-            <tr className="sbp-club-total-row">
-              <td colSpan={2}><strong>Total</strong></td>
-              <td className="th-right">
-                <span className="sbp-club-ps-badge">{fmt2(perShare)}<span className="sbp-club-ps-note"> (wtd avg)</span></span>
-              </td>
-              <td className="th-right"><strong>{fmtNum(totalShares, 0)}</strong></td>
-              <td className="th-right"><strong>{fmt2(totalIssued)}</strong></td>
-              <td className="th-right"><strong>{fmt2(totalPaidup)}</strong></td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
-
-      <div className="sbp-section-hdr sbp-section-hdr--buy" style={{ marginTop: 16 }}>
         <i className="ri-hand-coin-line" /> Buy Back Portion
       </div>
       <div className="sbp-cancel-fields">
@@ -194,6 +155,7 @@ const ClubBuybackPanel = ({
         />
       )}
     </div>
+    </>
   );
 };
 
@@ -360,7 +322,7 @@ const ShareBuybackPage = () => {
   const navigate      = useNavigate();
   const { state }     = useLocation();
 
-  const sourceTxns = state?.txns || (state?.txn ? [state.txn] : []);
+  const allTxns = state?.txns || (state?.txn ? [state.txn] : []);
 
   const [company, setCompany] = useState(state?.company || null);
   const [share]               = useState(state?.share   || null);
@@ -388,7 +350,15 @@ const ShareBuybackPage = () => {
   const [clubRemNoConsid,   setClubRemNoConsid]   = useState(false);
   const [clubShowModal,     setClubShowModal]     = useState(false);
 
-  const [bbRows, setBbRows] = useState(() => sourceTxns.map(mkBuybackRow));
+  const [bbRows, setBbRows] = useState(() => allTxns.map(mkBuybackRow));
+
+  // Club: certs the user unticked in the source table — left out of the pool
+  const [clubExcluded, setClubExcluded] = useState([]);
+  const toggleClubSource = useCallback((id) =>
+    setClubExcluded(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]), []);
+  const sourceTxns = buybackMode === 'club'
+    ? allTxns.filter(t => !clubExcluded.includes(t.share_transaction_id))
+    : allTxns;
 
   const updateRow = useCallback((rowId, changes) =>
     setBbRows(prev => prev.map(r => r.id === rowId ? { ...r, ...changes } : r)), []);
@@ -406,7 +376,8 @@ const ShareBuybackPage = () => {
   useEffect(() => { load(); }, [load]);
 
   const companyName = company?.name || '—';
-  const firstTxn    = sourceTxns[0];
+  const firstTxn    = allTxns[0];
+  const holderName  = firstTxn?.official_entity?.name || '—';
   const currency    = share?.currency || firstTxn?.company_share?.currency || '—';
   const shareType   = SHARE_TYPE_LABELS[share?.share_type || firstTxn?.share_type] || '—';
   const scType      = share?.share_class?.sc_type || firstTxn?.share_class?.sc_type || '';
@@ -435,6 +406,7 @@ const ShareBuybackPage = () => {
       };
 
       if (buybackMode === 'club') {
+        if (sourceTxns.length < 2) { toast.error('Select at least 2 certificates for a club buy back'); setSaving(false); return; }
         if (!clubBuyQty || clubBuyQty <= 0) { toast.error('Shares to buy back is required'); setSaving(false); return; }
         if (clubBuyQty > totalSrcShares)    { toast.error(`Cannot buy back more than ${totalSrcShares} shares`); setSaving(false); return; }
         if (clubBalQty > 0 && !clubNewCertNo.trim()) { toast.error('New cert no. is required when shares remain'); setSaving(false); return; }
@@ -516,7 +488,7 @@ const ShareBuybackPage = () => {
     </Container></div>
   );
 
-  if (!sourceTxns.length) return (
+  if (!allTxns.length) return (
     <div className="page-content"><Container fluid>
       <div className="sbp-loading">No source certificates provided.</div>
     </Container></div>
@@ -531,7 +503,7 @@ const ShareBuybackPage = () => {
           currency={currency}
           shareType={shareType}
           scType={scType}
-          actionLabel={`Buy Back · ${sourceTxns.length} cert${sourceTxns.length !== 1 ? 's' : ''}`}
+          actionLabel={`Buy Back · ${allTxns.length} cert${allTxns.length !== 1 ? 's' : ''}`}
           actionIcon="ri-hand-coin-line"
           actionVariant="cancel"
           onBack={() => navigate(-1)}
@@ -546,7 +518,7 @@ const ShareBuybackPage = () => {
             </div>
             <div className="sbp-field-group">
               <label className="sbp-lbl">Date of Transaction <span className="sbp-req">*</span></label>
-              <DatePickerInput value={buybackDate} onChange={setBuybackDate} placeholder="DD/MM/YYYY" />
+              <DatePickerInput value={buybackDate} onChange={e => setBuybackDate(e.target.value)} placeholder="DD/MM/YYYY" />
             </div>
             <div className="sbp-field-group sbp-field-group--remarks">
               <label className="sbp-lbl">Remarks</label>
@@ -580,6 +552,10 @@ const ShareBuybackPage = () => {
         {buybackMode === 'club' ? (
           <ClubBuybackPanel
             sourceTxns={sourceTxns}
+            allTxns={allTxns}
+            excludedIds={clubExcluded}
+            onToggleSource={toggleClubSource}
+            holderName={holderName}
             buybackShares={clubBuybackShares}
             onChangeBuybackShares={setClubBuybackShares}
             newCertNo={clubNewCertNo}
@@ -618,7 +594,7 @@ const ShareBuybackPage = () => {
               <>
                 <div className="sbp-field-group">
                   <label className="sbp-lbl">Payment Date</label>
-                  <DatePickerInput value={stampDutyDate} onChange={setStampDutyDate} placeholder="DD/MM/YYYY" />
+                  <DatePickerInput value={stampDutyDate} onChange={e => setStampDutyDate(e.target.value)} placeholder="DD/MM/YYYY" />
                 </div>
                 <div className="sbp-field-group">
                   <label className="sbp-lbl">Amount</label>

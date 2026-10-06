@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Container, Card, CardBody, Row, Col, Input, Spinner, Button } from 'reactstrap';
 import { toast } from 'react-toastify';
 import BreadCrumb from '../../Components/Common/BreadCrumb';
@@ -63,10 +63,12 @@ const DateWithRadio = ({ title, required, typeKey, dateKey, vals, onChange }) =>
           </label>
         ))}
       </div>
-      <DatePickerInput
-        style={{ maxWidth: 190 }}
-        value={vals[dateKey]}
-        onChange={e => onChange(dateKey, e.target.value)} />
+      <div className="aop-date-pick">
+        <span className="aop-role-date-lbl">Date</span>
+        <DatePickerInput
+          value={vals[dateKey]}
+          onChange={e => onChange(dateKey, e.target.value)} />
+      </div>
     </div>
   </div>
 );
@@ -86,6 +88,7 @@ const SubOfficialFormPage = () => {
   useCollapseSidebar();
   const { parentSlug, parentOfficialId, childSlug, official_id } = useParams();
   const navigate = useNavigate();
+  const { state: navState } = useLocation();
   const isEdit   = !!official_id;
 
   // Context
@@ -97,6 +100,9 @@ const SubOfficialFormPage = () => {
   // Representative mode — when childSlug === 'representatives', picker shows
   // officials from cs_officials of the director's company instead of entity table
   const isRepMode = childSlug === 'representatives';
+  // Alternate Director To — picker shows the other directors of the same company
+  const isAltMode = childSlug === 'alternate-director-to';
+  const usePicker = isRepMode || isAltMode;
 
   // Section 1 — entity selection
   const [eType,         setEType]         = useState('INDIVIDUAL');
@@ -184,6 +190,19 @@ const SubOfficialFormPage = () => {
     }
   };
 
+  // Alternate mode: load the company's directors (main records) as the principal options
+  useEffect(() => {
+    if (!isAltMode || !parentOfficial?.entity_id) return;
+    setRepOfficialsLoading(true);
+    getOfficialList({ entity_id: parentOfficial.entity_id, official_master_slug: parentSlug, is_ref_id: 0, limit: 500 })
+      .then(res => {
+        const data = res?.data?.data || res?.data || [];
+        setRepOfficials(Array.isArray(data) ? data : []);
+      })
+      .catch(() => setRepOfficials([]))
+      .finally(() => setRepOfficialsLoading(false));
+  }, [isAltMode, parentOfficial?.entity_id, parentSlug]); // eslint-disable-line
+
   // Load officials of the director's company to show in rep picker
   useEffect(() => {
     if (!isRepMode || !parentOfficial?.official_entity_id) return;
@@ -237,6 +256,7 @@ const SubOfficialFormPage = () => {
     setSelEntity(entityRow);
     setRepPickerOpen(false);
     loadEntityDetail(entityRow.entity_id, type === 'COMPANY' ? 'COMPANY' : 'INDIVIDUAL');
+    if (isAltMode) return;   // alternate link has its own appointment dates
     setDates({
       appointmentType: (dr.is_appt_proposed  ?? 1) ? 'Proposed' : 'Effective',
       appointmentDate: (dr.appointment_date  || '').slice(0, 10),
@@ -286,7 +306,7 @@ const SubOfficialFormPage = () => {
       }
 
       toast.success(`${childLabel} ${isEdit ? 'updated' : 'saved'} successfully`);
-      navigate(baseRoute);
+      goBack();
     } catch (err) {
       toast.error(typeof err === 'string' ? err : (err?.message || `Failed to ${isEdit ? 'update' : 'save'}`));
     } finally {
@@ -300,6 +320,10 @@ const SubOfficialFormPage = () => {
   const childLabel   = childMaster?.official_master_name     || childSlug;
   const parentLabel  = parentMaster?.official_master_name    || parentSlug;
   const baseRoute    = `/officials/${parentSlug}/${parentOfficialId}/${childSlug}`;
+  // Opened from the parent's Edit page (Linked Officials) → go back there after save / cancel
+  const goBack       = () => navState?.returnTo
+    ? navigate(navState.returnTo, { state: navState.returnState })
+    : navigate(baseRoute);
   const pageTitle    = `${isEdit ? 'Edit' : 'Add'} ${childLabel}`;
 
   document.title = `${pageTitle} | ASR CSS`;
@@ -413,7 +437,7 @@ const SubOfficialFormPage = () => {
               : childLabel} />
 
             {/* INDIVIDUAL / COMPANY toggle — add mode, non-rep only */}
-            {!isEdit && !isRepMode && (
+            {!isEdit && !usePicker && (
               <div className="aop-seg">
                 <button
                   className={`aop-seg-btn ${eType === 'INDIVIDUAL' ? 'active' : ''}`}
@@ -433,8 +457,10 @@ const SubOfficialFormPage = () => {
               <BrowseField
                 label={isRepMode
                   ? 'Select Representative'
-                  : `Select ${eType === 'INDIVIDUAL' ? 'Individual' : 'Company'}`}
-                onClick={() => isRepMode ? setRepPickerOpen(true) : setLookupOpen(true)} />
+                  : isAltMode
+                    ? 'Select Director'
+                    : `Select ${eType === 'INDIVIDUAL' ? 'Individual' : 'Company'}`}
+                onClick={() => usePicker ? setRepPickerOpen(true) : setLookupOpen(true)} />
             )}
 
             {/* Loading state */}
@@ -450,7 +476,7 @@ const SubOfficialFormPage = () => {
               <CompanyDetailPanel
                 detail={entityDetail}
                 onClear={!isEdit ? clearEntity : undefined}
-                onSwap={!isEdit ? () => (isRepMode ? setRepPickerOpen(true) : setLookupOpen(true)) : undefined}
+                onSwap={!isEdit ? () => (usePicker ? setRepPickerOpen(true) : setLookupOpen(true)) : undefined}
                 swapLabel="Change Company" />
             )}
 
@@ -462,7 +488,7 @@ const SubOfficialFormPage = () => {
                 overrides={{}}
                 onChange={() => {}}
                 onClear={!isEdit ? clearEntity : undefined}
-                onSwap={!isEdit ? () => (isRepMode ? setRepPickerOpen(true) : setLookupOpen(true)) : undefined}
+                onSwap={!isEdit ? () => (usePicker ? setRepPickerOpen(true) : setLookupOpen(true)) : undefined}
                 swapLabel="Change Individual" />
             )}
           </CardBody>
@@ -490,7 +516,7 @@ const SubOfficialFormPage = () => {
 
         {/* ── Action buttons ── */}
         <div className="d-flex justify-content-end gap-2 mb-4">
-          <Button color="light" disabled={saving} onClick={() => navigate(baseRoute)}>
+          <Button color="light" disabled={saving} onClick={goBack}>
             <i className="ri-arrow-left-line me-1"></i>Cancel
           </Button>
           <Button
@@ -506,7 +532,7 @@ const SubOfficialFormPage = () => {
       </Container>
 
       {/* Entity lookup — used for proxy / nominator and any non-rep child slug */}
-      {!isRepMode && (
+      {!usePicker && (
         <EntityLookupModal
           isOpen={lookupOpen}
           onClose={() => setLookupOpen(false)}
@@ -531,6 +557,24 @@ const SubOfficialFormPage = () => {
           loading={repOfficialsLoading}
           excludeIds={[
             ...assignedRepIds,
+            ...(selEntity ? [String(selEntity.entity_id)] : []),
+          ]}
+        />
+      )}
+
+      {/* Alternate Director To — choose the principal from the company's other directors */}
+      {isAltMode && (
+        <RepresentativePickerModal
+          isOpen={repPickerOpen}
+          onClose={() => setRepPickerOpen(false)}
+          onSelect={handleRepOfficialSelect}
+          officials={repOfficials}
+          loading={repOfficialsLoading}
+          title="Choose Director"
+          nameLabel="Director"
+          emptyText="No other active directors in this company."
+          excludeIds={[
+            String(parentOfficial?.official_entity_id),
             ...(selEntity ? [String(selEntity.entity_id)] : []),
           ]}
         />

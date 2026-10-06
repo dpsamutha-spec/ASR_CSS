@@ -1,0 +1,105 @@
+/* ── ShareCombinePage — mirrors split/replacement layout ─────────────────── */
+
+.scb-loading {
+  display: flex; align-items: center; gap: 10px;
+  padding: 40px 0; color: #6c757d; font-size: 14px;
+}
+
+/* ── Details card ── */
+.scb-details-card {
+  background: #fff; border: 1px solid #e2e5ef;
+  border-radius: 10px; padding: 16px 20px; margin-bottom: 14px;
+}
+.scb-details-row { display: flex; gap: 20px; flex-wrap: wrap; align-items: flex-end; }
+
+/* ── Fields ── */
+.scb-field-group { display: flex; flex-direction: column; gap: 5px; min-width: 160px; }
+.scb-field-group--remarks { flex: 1; min-width: 220px; }
+.scb-lbl { font-size: 11.5px; font-weight: 600; color: #6c757d; text-transform: uppercase; letter-spacing: 0.4px; }
+.scb-req { color: #e53935; }
+
+.scb-input {
+  height: 36px; padding: 0 10px;
+  border: 1px solid #dce0ec; border-radius: 6px;
+  font-size: 13.5px; color: #212529; background: #fff;
+  outline: none; transition: border-color 0.15s; width: 100%;
+}
+.scb-input:focus { border-color: #405189; }
+.scb-input--readonly { background: #f5f6fa; color: #405189; font-weight: 600; font-variant-numeric: tabular-nums; }
+.scb-field-group .asr-date-picker-input { height: 36px !important; font-size: 13.5px !important; border-radius: 6px !important; }
+
+/* ── Combined cert card ── */
+.scb-card {
+  background: #fff; border: 1.5px solid #e2e5ef;
+  border-radius: 12px; padding: 16px 20px; margin-bottom: 14px;
+}
+.scb-section-hdr {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; display: flex; align-items: center;
+  gap: 6px; padding: 5px 10px; border-radius: 5px; margin-bottom: 14px;
+  background: #e6f6f3; color: #0a7d6c;
+}
+.scb-fields {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+}
+.scb-fields .scb-field-group { min-width: 0; }
+
+.scb-note {
+  margin-top: 14px; padding: 8px 12px; border-radius: 6px;
+  font-size: 12.5px; display: flex; align-items: center; gap: 6px;
+  background: #fff8e6; color: #8a5d00;
+}
+.scb-note--ok { background: #e8f5e9; color: #2e7d32; }
+
+/* ── Footer ── */
+.scb-footer {
+  background: #fff; border: 1px solid #e2e5ef;
+  border-radius: 10px; padding: 14px 20px; margin-top: 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 10px;
+}
+.scb-footer-summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.scb-sum-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 4px 10px; border-radius: 20px;
+  font-size: 12.5px; font-weight: 600;
+  background: #eef3ff; color: #405189;
+}
+.scb-sum-chip--ok { background: #e8f5e9; color: #2e7d32; }
+.scb-footer-actions { display: flex; gap: 10px; }
+.scb-btn-cancel {
+  height: 36px; padding: 0 18px;
+  border: 1px solid #dce0ec; border-radius: 7px;
+  background: #fff; color: #495057;
+  font-size: 13.5px; font-weight: 500; cursor: pointer;
+  transition: border-color .15s;
+}
+.scb-btn-cancel:hover:not(:disabled) { border-color: #9099b0; }
+.scb-btn-save {
+  height: 36px; padding: 0 20px;
+  border: none; border-radius: 7px;
+  background: #0ab39c; color: #fff;
+  font-size: 13.5px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; gap: 7px;
+  transition: background .15s;
+}
+.scb-btn-save:hover:not(:disabled) { background: #089985; }
+.scb-btn-save:disabled,
+.scb-btn-cancel:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* ── Combined cert lines (one per per share) ── */
+.scb-table-wrap { overflow-x: auto; margin-top: 16px; }
+.scb-table { width: 100%; border-collapse: collapse; }
+.scb-table th {
+  font-size: 11px; font-weight: 600; color: #6c757d;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 0 8px 6px; text-align: left; white-space: nowrap;
+}
+.scb-table th.scb-r { text-align: right; }
+.scb-table td { padding: 8px; border-top: 1px solid #f0f2f8; font-size: 13px; }
+.scb-cert { font-weight: 700; color: #2c3a6b; }
+.scb-num {
+  text-align: right; font-weight: 600; color: #405189;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}

@@ -135,6 +135,56 @@ class OfficialService {
 
     // ── Fetch helpers ─────────────────────────────────────────────────────────
 
+    // Returns an error message, or null when the Alternate Director To link is valid
+    async _validateAlternateDirectorTo(models, body) {
+        const today  = new Date().toISOString().slice(0, 10);
+        const active = { [Op.or]: [{ ceased_date: null }, { ceased_date: { [Op.gt]: today } }] };
+
+        const alternate = await models.officials.findOne({
+            where: { official_id: body.reference_official_id, is_deleted: 0 },
+            raw: true,
+        });
+        if (!alternate) return 'Alternate director not found.';
+        if (!(await this._hasActiveSubRole(models, alternate.official_id, 'alternate-substitute-director')))
+            return 'Only a director appointed as Alternate / Substitute Director can be an alternate director to another director.';
+
+        if (!body.official_entity_id) return 'Please choose the director.';
+        if (String(body.official_entity_id) === String(alternate.official_entity_id))
+            return 'A director cannot be an alternate director to themselves.';
+
+        // Principal must be an active (not ceased) director of the same company
+        const principal = await models.officials.findOne({
+            where:   { entity_id: alternate.entity_id, official_entity_id: body.official_entity_id, official_master_id: alternate.official_master_id, is_ref_id: 0, is_deleted: 0 },
+            include: [{ model: models.officials_date, as: 'date_record', required: true, where: { is_deleted: 0, ...active } }],
+        });
+        if (!principal) return 'The chosen person is not an active director of this company.';
+
+        // One principal at a time
+        const existing = await models.officials.findOne({
+            where:   { reference_official_id: alternate.official_id, official_master_slug: 'alternate-director-to', is_deleted: 0 },
+            include: [{ model: models.officials_date, as: 'date_record', required: true, where: { is_deleted: 0, ...active } }],
+        });
+        if (existing) return 'This director is already an alternate director to another director. Cease that first.';
+
+        return null;
+    }
+
+    // True when the official has the sub role appointed and not yet ceased
+    async _hasActiveSubRole(models, officialId, subRoleSlug) {
+        const today = new Date().toISOString().slice(0, 10);
+        const rec = await models.officials_date.findOne({
+            where: {
+                official_id:          officialId,
+                official_master_slug: subRoleSlug,
+                is_deleted:           0,
+                appointment_date:     { [Op.ne]: null },
+                [Op.or]: [{ ceased_date: null }, { ceased_date: { [Op.gt]: today } }],
+            },
+            raw: true,
+        });
+        return !!rec;
+    }
+
     _withAssociations(models) {
         const includes = [];
 
@@ -359,6 +409,34 @@ class OfficialService {
         try {
 
             const now = new Date();
+
+            // A director's Nominator can only be added while the director holds an
+            // active "Nominee Director" sub role (appointed and not ceased)
+            if (body.official_master_slug === 'nominator' && body.reference_official_id) {
+                const parent = await models.officials.findOne({
+                    where:   { official_id: body.reference_official_id, is_deleted: 0 },
+                    include: [{ model: models.official_master, as: 'official_master', attributes: ['official_master_slug'], required: false }],
+                });
+                if (parent?.official_master?.official_master_slug === 'directors'
+                    && !(await this._hasActiveSubRole(models, parent.official_id, 'nominee-director'))) {
+                    await t.rollback();
+                    return responseHandler.returnError(
+                        httpStatus.BAD_REQUEST,
+                        'Nominator can only be added for a director appointed as Nominee Director.'
+                    );
+                }
+            }
+
+            // "Alternate Director To": the alternate must hold an active "Alternate /
+            // Substitute Director" sub role, the principal must be another active
+            // director of the same company, and an alternate stands in for one director at a time
+            if (body.official_master_slug === 'alternate-director-to' && body.reference_official_id) {
+                const err = await this._validateAlternateDirectorTo(models, body);
+                if (err) {
+                    await t.rollback();
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, err);
+                }
+            }
 
             // Duplicate check
             const dupWhere = {

@@ -1,0 +1,92 @@
+/* ── ShareReclassificationPage — mirrors split/combine layout ─────────────── */
+
+.srcl-loading {
+  display: flex; align-items: center; gap: 10px;
+  padding: 40px 0; color: #6c757d; font-size: 14px;
+}
+
+.srcl-card {
+  background: #fff; border: 1.5px solid #e2e5ef;
+  border-radius: 12px; padding: 16px 20px; margin-bottom: 14px;
+}
+.srcl-section-hdr {
+  font-size: 11.5px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.6px; display: flex; align-items: center;
+  gap: 6px; padding: 5px 10px; border-radius: 5px; margin-bottom: 14px;
+  background: #f3e8ff; color: #6c3d97;
+}
+.srcl-section-hdr--src { background: #eef3ff; color: #405189; }
+.srcl-holder-chip {
+  margin-left: auto; display: inline-flex; align-items: center; gap: 4px;
+  background: #405189; color: #fff; border-radius: 12px;
+  padding: 2px 10px; font-size: 11.5px; text-transform: none; letter-spacing: 0;
+}
+
+/* ── Fields ── */
+.srcl-grid {
+  display: grid; gap: 14px 20px;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+}
+.srcl-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.srcl-field--wide { grid-column: 1 / -1; }
+.srcl-lbl { font-size: 11.5px; font-weight: 600; color: #6c757d; text-transform: uppercase; letter-spacing: 0.4px; }
+.srcl-req { color: #e53935; }
+.srcl-input {
+  height: 36px; padding: 0 10px;
+  border: 1px solid #dce0ec; border-radius: 6px;
+  font-size: 13.5px; color: #212529; background: #fff;
+  outline: none; transition: border-color 0.15s; width: 100%;
+}
+.srcl-input:focus { border-color: #405189; }
+.srcl-input--err  { border-color: #e53935 !important; }
+.srcl-field .asr-date-picker-input { height: 36px !important; font-size: 13.5px !important; border-radius: 6px !important; }
+.srcl-err  { font-size: 11.5px; color: #e53935; }
+.srcl-hint { font-size: 11.5px; color: #6c757d; }
+
+/* ── Certificate table ── */
+.srcl-table-wrap { overflow-x: auto; }
+.srcl-table { width: 100%; border-collapse: collapse; }
+.srcl-table th {
+  font-size: 11px; font-weight: 600; color: #6c757d;
+  text-transform: uppercase; letter-spacing: 0.4px;
+  padding: 0 8px 6px; text-align: left; white-space: nowrap;
+}
+.srcl-table th.srcl-r { text-align: right; }
+.srcl-table td { padding: 8px; border-top: 1px solid #f0f2f8; font-size: 13px; }
+.srcl-cert { font-weight: 700; color: #2c3a6b; }
+.srcl-num {
+  text-align: right; font-weight: 600; color: #405189;
+  font-variant-numeric: tabular-nums; white-space: nowrap;
+}
+
+.srcl-note {
+  margin-top: 12px; padding: 8px 12px; border-radius: 6px;
+  font-size: 12.5px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  background: #fff8e6; color: #8a5d00;
+}
+.srcl-note--muted { background: #f5f6fa; color: #6c757d; }
+
+/* ── Footer ── */
+.srcl-footer {
+  background: #fff; border: 1px solid #e2e5ef;
+  border-radius: 10px; padding: 14px 20px; margin-top: 20px;
+  display: flex; justify-content: flex-end; gap: 10px;
+}
+.srcl-btn-cancel {
+  height: 36px; padding: 0 18px;
+  border: 1px solid #dce0ec; border-radius: 7px;
+  background: #fff; color: #495057;
+  font-size: 13.5px; font-weight: 500; cursor: pointer;
+}
+.srcl-btn-cancel:hover:not(:disabled) { border-color: #9099b0; }
+.srcl-btn-save {
+  height: 36px; padding: 0 20px;
+  border: none; border-radius: 7px;
+  background: #6c3d97; color: #fff;
+  font-size: 13.5px; font-weight: 600; cursor: pointer;
+  display: flex; align-items: center; gap: 7px;
+}
+.srcl-btn-save:hover:not(:disabled) { background: #5a3280; }
+.srcl-btn-save:disabled,
+.srcl-btn-cancel:disabled { opacity: 0.6; cursor: not-allowed; }
+.srcl-input--readonly { background: #f5f6fa; color: #495057; cursor: not-allowed; }

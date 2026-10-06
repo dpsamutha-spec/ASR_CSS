@@ -17,6 +17,9 @@ import {
   retainDissolveShareTxn,
   retainBuybackShareTxn,
   retainReplacementShareTxn,
+  retainSplitShareTxn,
+  retainCombineShareTxn,
+  retainReclassShareTxn,
   getShareholderHistory,
 } from '../../helpers/backend_helper';
 import './EntitySharesPage.css';
@@ -259,7 +262,7 @@ const ViewTxnModal = ({ txn, share, company, onClose }) => {
 };
 
 // ── Transaction actions dropdown ─────────────────────────────────────────────
-const TxnActionsDropdown = ({ txn, onView, onPayments, onTransfer, onTransferAll, onDissolve, onDissolveAll, onCancel, onCancelAll, onBuyback, onBuybackAll, onReplacement, onRetain, onHistory, hasMultipleAllotments: hasMultipleShares }) => {
+const TxnActionsDropdown = ({ txn, onView, onPayments, onTransfer, onTransferAll, onDissolve, onDissolveAll, onCancel, onCancelAll, onBuyback, onBuybackAll, onReplacement, onSplit, onSplitAll, onCombine, onReclassify, onRetain, onHistory, hasMultipleAllotments: hasMultipleShares }) => {
   const [menuPos, setMenuPos] = useState(null);
   const btnRef = React.useRef(null);
 
@@ -277,20 +280,24 @@ const TxnActionsDropdown = ({ txn, onView, onPayments, onTransfer, onTransferAll
   const isDissolveIn   = txn?.share_header?.extra_type_of_transaction === 'DISSOLVE' || txn?.share_header?.extra_type_of_transaction === 'CLUB_DISSOLVE';
   const isBuybackIn     = (txn?.share_header?.extra_type_of_transaction === 'BUYBACK' || txn?.share_header?.extra_type_of_transaction === 'CLUB_BUYBACK') && txn?.transaction_status === 'IN';
   const isReplacementIn = (txn?.share_header?.extra_type_of_transaction === 'REPLACEMENT' || txn?.share_header?.extra_type_of_transaction === 'REPLACEMENT_COMBINE') && txn?.transaction_status === 'IN';
+  const isSplitIn       = (txn?.share_header?.extra_type_of_transaction === 'SPLIT' || txn?.share_header?.extra_type_of_transaction === 'CLUB_SPLIT') && txn?.transaction_status === 'IN';
+  const isCombineIn     = txn?.share_header?.extra_type_of_transaction === 'COMBINE' && txn?.transaction_status === 'IN';
+  const isReclassIn     = txn?.share_header?.extra_type_of_transaction === 'RECLASSIFICATION' && txn?.transaction_status === 'IN';
   const isInOrNone     = txn?.transaction_status === 'IN' || txn?.transaction_status === 'NONE';
   const isValid        = txn?.status === 'VALID';
 
   // Grouped transaction actions — easy to extend with new modules
   const txnGroups = [
-    ...(onTransfer ? [{ label: 'Transfer', icon: 'ri-swap-line',         onSingle: onTransfer, onAll: hasMultipleShares && onTransferAll ? onTransferAll : null }] : []),
+    ...(isValid && isInOrNone && onTransfer ? [{ label: 'Transfer', icon: 'ri-swap-line',         onSingle: onTransfer, onAll: hasMultipleShares && onTransferAll ? onTransferAll : null }] : []),
     ...(isValid && isInOrNone && onDissolve ? [{ label: 'Dissolve', icon: 'ri-user-shared-line', onSingle: onDissolve, onAll: hasMultipleShares && onDissolveAll ? onDissolveAll : null }] : []),
     ...(isValid && isInOrNone && onCancel   ? [{ label: 'Cancel',   icon: 'ri-scissors-cut-line', onSingle: onCancel,  onAll: hasMultipleShares && onCancelAll   ? onCancelAll   : null }] : []),
     ...(isValid && isInOrNone && onBuyback  ? [{ label: 'Buy Back', icon: 'ri-buy-line',           onSingle: onBuyback, onAll: hasMultipleShares && onBuybackAll  ? onBuybackAll  : null }] : []),
+    ...(isValid && isInOrNone && onSplit    ? [{ label: 'Split',    icon: 'ri-git-branch-line',    onSingle: onSplit,   onAll: hasMultipleShares && onSplitAll    ? onSplitAll    : null }] : []),
   ];
 
-  const showRetain = (isTransfer || isClubTransfer || isDissolveIn || isBuybackIn || isReplacementIn) && isValid && onRetain;
+  const showRetain = (isTransfer || isClubTransfer || isDissolveIn || isBuybackIn || isReplacementIn || isSplitIn || isCombineIn || isReclassIn) && isValid && onRetain;
 
-  const infoCount = 3 + (isValid && isInOrNone && onReplacement ? 1 : 0);
+  const infoCount = 3 + (isValid && isInOrNone && onReplacement ? 1 : 0) + (isValid && isInOrNone && onCombine && hasMultipleShares ? 1 : 0) + (isValid && isInOrNone && onReclassify ? 1 : 0);
   const estimatedHeight =
     infoCount * 34 +
     (txnGroups.length > 0 ? 9 + txnGroups.length * 40 : 0) +
@@ -319,6 +326,8 @@ const TxnActionsDropdown = ({ txn, onView, onPayments, onTransfer, onTransferAll
             { label: 'Shareholder History',        icon: 'ri-history-line',             action: onHistory,     show: true },
             { label: 'Payments',                   icon: 'ri-money-dollar-circle-line', action: onPayments,    show: true },
             { label: 'Replacement for Lost Cert',  icon: 'ri-file-copy-2-line',         action: onReplacement, show: !!(isValid && isInOrNone && onReplacement) },
+            { label: 'Reclassification',           icon: 'ri-exchange-line',            action: onReclassify,  show: !!(isValid && isInOrNone && onReclassify) },
+            { label: 'Combine Shares',             icon: 'ri-merge-cells-horizontal',   action: onCombine,     show: !!(isValid && isInOrNone && onCombine && hasMultipleShares) },
           ].filter(i => i.show).map(item => (
             <button key={item.label} className="ssl-actions-item"
               onMouseDown={() => { item.action(); setMenuPos(null); }}>
@@ -385,6 +394,12 @@ const ShareGroup = ({ share, transactions, onAddAllotment, entityId, company, de
   const [retainingBuyback,     setRetainingBuyback]     = useState(false);
   const [retainReplacementTxn, setRetainReplacementTxn] = useState(null);
   const [retainingReplacement, setRetainingReplacement] = useState(false);
+  const [retainSplitTxn,       setRetainSplitTxn]       = useState(null);
+  const [retainingSplit,       setRetainingSplit]       = useState(false);
+  const [retainCombineTxn,     setRetainCombineTxn]     = useState(null);
+  const [retainingCombine,     setRetainingCombine]     = useState(false);
+  const [retainReclassTxn,     setRetainReclassTxn]     = useState(null);
+  const [retainingReclass,     setRetainingReclass]     = useState(false);
   const [retainSrcTxns,     setRetainSrcTxns]     = useState([]);
   const [loadingRetainSrc,  setLoadingRetainSrc]  = useState(false);
 
@@ -484,6 +499,51 @@ const ShareGroup = ({ share, transactions, onAddAllotment, entityId, company, de
       toast.error(typeof err === 'string' ? err : 'Failed to retain replacement');
     } finally {
       setRetainingReplacement(false);
+    }
+  };
+
+  const handleRetainSplitConfirm = async () => {
+    if (!retainSplitTxn) return;
+    setRetainingSplit(true);
+    try {
+      await retainSplitShareTxn(retainSplitTxn.share_transaction_id);
+      toast.success('Split retained successfully');
+      setRetainSplitTxn(null);
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : 'Failed to retain split');
+    } finally {
+      setRetainingSplit(false);
+    }
+  };
+
+  const handleRetainCombineConfirm = async () => {
+    if (!retainCombineTxn) return;
+    setRetainingCombine(true);
+    try {
+      await retainCombineShareTxn(retainCombineTxn.share_transaction_id);
+      toast.success('Combine retained successfully');
+      setRetainCombineTxn(null);
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : 'Failed to retain combine');
+    } finally {
+      setRetainingCombine(false);
+    }
+  };
+
+  const handleRetainReclassConfirm = async () => {
+    if (!retainReclassTxn) return;
+    setRetainingReclass(true);
+    try {
+      await retainReclassShareTxn(retainReclassTxn.share_transaction_id);
+      toast.success('Reclassification retained successfully');
+      setRetainReclassTxn(null);
+      if (onRefresh) onRefresh();
+    } catch (err) {
+      toast.error(typeof err === 'string' ? err : 'Failed to retain reclassification');
+    } finally {
+      setRetainingReclass(false);
     }
   };
 
@@ -737,6 +797,36 @@ const ShareGroup = ({ share, transactions, onAddAllotment, entityId, company, de
                             `/company/${entityId}/shares/shareholder-register/replacement`,
                             { state: { txn: t, share, company } }
                           )}
+                          onSplit={() => navigate(
+                            `/company/${entityId}/shares/shareholder-register/split`,
+                            { state: { txns: [t], share, company } }
+                          )}
+                          onReclassify={() => navigate(
+                            `/company/${entityId}/shares/shareholder-register/reclassification`,
+                            { state: { txn: t, share, company } }
+                          )}
+                          onCombine={() => {
+                            const shareholderTxns = transactions.filter(x =>
+                              String(x.official_entity_id) === String(t.official_entity_id) &&
+                              x.status === 'VALID' &&
+                              (x.transaction_status === 'IN' || x.transaction_status === 'NONE')
+                            );
+                            navigate(
+                              `/company/${entityId}/shares/shareholder-register/combine`,
+                              { state: { txns: shareholderTxns, share, company } }
+                            );
+                          }}
+                          onSplitAll={() => {
+                            const shareholderTxns = transactions.filter(x =>
+                              String(x.official_entity_id) === String(t.official_entity_id) &&
+                              x.status === 'VALID' &&
+                              (x.transaction_status === 'IN' || x.transaction_status === 'NONE')
+                            );
+                            navigate(
+                              `/company/${entityId}/shares/shareholder-register/split`,
+                              { state: { txns: shareholderTxns, share, company } }
+                            );
+                          }}
                           onRetain={t.status === 'VALID' && t.share_header?.extra_type_of_transaction === 'TRANSFER'
                             ? () => { setRetainTxn(t); setRetainSrcTxns([]); fetchRetainSrcTxns(t.old_share_id ? [t.old_share_id] : []); }
                             : t.status === 'VALID' && t.share_header?.extra_type_of_transaction === 'CLUB_TRANSFER'
@@ -747,6 +837,12 @@ const ShareGroup = ({ share, transactions, onAddAllotment, entityId, company, de
                             ? () => { setRetainBuybackTxn(t); setRetainSrcTxns([]); fetchRetainSrcTxns(t.old_data?.source_txn_ids || []); }
                             : t.status === 'VALID' && (t.share_header?.extra_type_of_transaction === 'REPLACEMENT' || t.share_header?.extra_type_of_transaction === 'REPLACEMENT_COMBINE') && t.transaction_status === 'IN'
                             ? () => { setRetainReplacementTxn(t); setRetainSrcTxns([]); fetchRetainSrcTxns(t.old_data?.source_txn_ids || []); }
+                            : t.status === 'VALID' && (t.share_header?.extra_type_of_transaction === 'SPLIT' || t.share_header?.extra_type_of_transaction === 'CLUB_SPLIT') && t.transaction_status === 'IN'
+                            ? () => { setRetainSplitTxn(t); setRetainSrcTxns([]); fetchRetainSrcTxns(t.old_data?.source_txn_ids || []); }
+                            : t.status === 'VALID' && t.share_header?.extra_type_of_transaction === 'COMBINE' && t.transaction_status === 'IN'
+                            ? () => { setRetainCombineTxn(t); setRetainSrcTxns([]); fetchRetainSrcTxns(t.old_data?.source_txn_ids || []); }
+                            : t.status === 'VALID' && t.share_header?.extra_type_of_transaction === 'RECLASSIFICATION' && t.transaction_status === 'IN'
+                            ? () => { setRetainReclassTxn(t); setRetainSrcTxns([]); fetchRetainSrcTxns(t.old_data?.source_txn_ids || []); }
                             : undefined}
                         />
                       </td>
@@ -941,6 +1037,70 @@ const ShareGroup = ({ share, transactions, onAddAllotment, entityId, company, de
                   () => setRetainReplacementTxn(null),
                   handleRetainReplacementConfirm,
                   retainingReplacement,
+                  'Confirm Retain',
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Reclassification Retain confirm dialog */}
+          {retainReclassTxn && (
+            <div className="ssl-retain-overlay" onClick={() => !retainingReclass && setRetainReclassTxn(null)}>
+              <div className="ssl-retain-modal ssl-retain-modal--wide" onClick={e => e.stopPropagation()}>
+                <div className="ssl-retain-icon"><i className="ri-arrow-go-back-line" /></div>
+                <div className="ssl-retain-title">Retain Reclassification</div>
+                <div className="ssl-retain-body">
+                  Retaining the reclassified cert <strong>{retainReclassTxn.share_cert_no || retainReclassTxn.share_transaction_id}</strong>.
+                  The original certificate below will be restored to its old share class, and company shares in both classes go back to their previous values.
+                </div>
+                {renderSrcTable(
+                  'Cannot be undone if the reclassified certificate has already been used in another transaction.',
+                  () => setRetainReclassTxn(null),
+                  handleRetainReclassConfirm,
+                  retainingReclass,
+                  'Confirm Retain',
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Combine Retain confirm dialog */}
+          {retainCombineTxn && (
+            <div className="ssl-retain-overlay" onClick={() => !retainingCombine && setRetainCombineTxn(null)}>
+              <div className="ssl-retain-modal ssl-retain-modal--wide" onClick={e => e.stopPropagation()}>
+                <div className="ssl-retain-icon"><i className="ri-arrow-go-back-line" /></div>
+                <div className="ssl-retain-title">Retain Combine</div>
+                <div className="ssl-retain-body">
+                  Retaining the combined cert <strong>{retainCombineTxn.share_cert_no || retainCombineTxn.share_transaction_id}</strong>.
+                  The original certificates below will be restored and every line of the combined certificate invalidated.
+                </div>
+                {renderSrcTable(
+                  'Cannot be undone if the combined certificate has already been used in another transaction.',
+                  () => setRetainCombineTxn(null),
+                  handleRetainCombineConfirm,
+                  retainingCombine,
+                  'Confirm Retain',
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Split Retain confirm dialog */}
+          {retainSplitTxn && (
+            <div className="ssl-retain-overlay" onClick={() => !retainingSplit && setRetainSplitTxn(null)}>
+              <div className="ssl-retain-modal ssl-retain-modal--wide" onClick={e => e.stopPropagation()}>
+                <div className="ssl-retain-icon"><i className="ri-arrow-go-back-line" /></div>
+                <div className="ssl-retain-title">Retain Split</div>
+                <div className="ssl-retain-body">
+                  Retaining the split that created cert <strong>{retainSplitTxn.share_cert_no || retainSplitTxn.share_transaction_id}</strong>.
+                  The original certificate(s) below will be restored and all certificates from this split invalidated.
+                  {retainSplitTxn.share_header?.extra_type_of_transaction === 'CLUB_SPLIT' && ' Company shares will be restored to their values before the club split.'}
+                </div>
+                {renderSrcTable(
+                  'Cannot be undone if any certificate from this split has already been used in another transaction.',
+                  () => setRetainSplitTxn(null),
+                  handleRetainSplitConfirm,
+                  retainingSplit,
                   'Confirm Retain',
                 )}
               </div>

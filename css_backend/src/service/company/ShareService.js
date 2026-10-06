@@ -1993,7 +1993,8 @@ class ShareService {
     //   - source cert → INVALID
     //   - if partial cancellation (cancelShares < source): create new IN row
     //     for remaining shares (same holder, new cert no.)
-    //   - entity_shares pool reduced by the cancelled amount
+    //   - separate mode: entity_shares untouched (per_share unchanged)
+    //   - club mode: source pools reduced, balance moved to a new weighted pool
     //
     // body: { entity_id, cancel_no, cancel_date, items: [{
     //   source_txn_id, no_of_shares_cancelled, per_share,
@@ -2086,7 +2087,7 @@ class ShareService {
             const cancelOldData = {
                 source_txn_ids:         sourceIds,
                 cancel_type:            cancel_mode,
-                affects_company_shares: Number(affects_company_shares) !== 0 ? 1 : 0,
+                affects_company_shares: cancel_mode === 'club' && Number(affects_company_shares) !== 0 ? 1 : 0,
                 source_es_snapshot:     buildESSnapshotForOldData(esSnap),
             };
 
@@ -2337,24 +2338,9 @@ class ShareService {
                 { where: { share_transaction_id: { [Op.in]: sourceIds } } }
             );
 
-            // ── Reduce source entity_shares pools by cancelled amounts ─────────
-            // For partial cancels the reduction map already has the full source amount —
-            // we only need to reduce by the cancelled portion, not the full source.
-            // Build a precise reduction map from item quantities.
-            const preciseReductionMap = {};
-            for (const it of items) {
-                const src    = srcById[Number(it.source_txn_id)];
-                const csId   = String(src.company_share_id);
-                const canQty = Number(it.no_of_shares_cancelled);
-                const srcPS  = Number(src.per_share || 0);
-                if (!preciseReductionMap[csId]) preciseReductionMap[csId] = { shares: 0, issued: 0, paidup: 0 };
-                preciseReductionMap[csId].shares += canQty;
-                preciseReductionMap[csId].issued += canQty * srcPS;
-                preciseReductionMap[csId].paidup += canQty * srcPS;
-            }
-            if (Number(affects_company_shares) !== 0) {
-                await reduceEntityShares({ snapshot: esSnap, reductionMap: preciseReductionMap, userId, models });
-            }
+            // Separate cancel keeps per_share unchanged, so company shares (entity_shares)
+            // stay as-is — only the shareholder's holding changes. Only club cancel,
+            // which can produce a new per_share, touches company shares.
 
             return responseHandler.returnSuccess(httpStatus.CREATED, 'Share cancellation saved successfully', {
                 share_id:     shareHeader.share_id,
@@ -2818,7 +2804,9 @@ class ShareService {
             if (!sourceTxn) return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Source certificate not found or already used');
 
             // ── Check if new_cert_no already exists for this entity ───────────
-            const existingCert = await this.txnDao.Model.findOne({
+            // A cert no. can have several lines (one per per_share, e.g. after a combine);
+            // prefer the line whose per_share matches the source so it can be combined.
+            const existingLines = await this.txnDao.Model.findAll({
                 where: {
                     entity_id,
                     share_cert_no:      new_cert_no,
@@ -2829,6 +2817,8 @@ class ShareService {
                 },
                 raw: true,
             });
+            const existingCert = existingLines.find(l => Number(l.per_share) === Number(sourceTxn.per_share))
+                || existingLines[0] || null;
 
             // ── Validate compatibility when combining with existing ────────────
             // If per_share differs: treat as fresh cert (don't touch existing, don't combine)
@@ -3086,6 +3076,977 @@ class ShareService {
         }
     };
 
+    // ── CREATE SPLIT (split share cert) ──────────────────────────────────────────
+    //
+    // Splits share certificate(s) into two or more new certs for the SAME holder.
+    // split_mode 'separate' — one source cert; same per_share, same company_share_id.
+    //                          entity_shares untouched (only the holder's certs change).
+    // split_mode 'club'     — several source certs are pooled at a weighted-average
+    //                          per_share, so the source entity_shares pools are reduced
+    //                          and one new pool is created for the split certs.
+    // Both: sources → INVALID with an OUT row each; one IN row per new cert.
+    //
+    // body: { entity_id, source_txn_ids, split_mode, split_no, split_date, remarks,
+    //         splits: [{ cert_no, folio_no?, no_of_shares, distinctive_from?, distinctive_to? }] }
+
+    createSplit = async (body, userId) => {
+        try {
+            const models = getCurrentModels();
+            const {
+                entity_id, split_no, split_date, remarks,
+                split_mode = 'separate',
+                splits = [],
+            } = body;
+            const sourceIds = (Array.isArray(body.source_txn_ids) ? body.source_txn_ids : [body.source_txn_id])
+                .filter(Boolean).map(Number);
+            const isClub = split_mode === 'club';
+
+            if (!entity_id)  return responseHandler.returnError(httpStatus.BAD_REQUEST, 'entity_id is required');
+            if (!split_date) return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Split date is required');
+            if (isClub ? sourceIds.length < 2 : sourceIds.length !== 1)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST,
+                    isClub ? 'Club split needs at least two source certificates' : 'Select exactly one source certificate');
+            if (!Array.isArray(splits) || splits.length < 2)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'At least two new certificates are required');
+
+            // ── Fetch & validate source txns ──────────────────────────────────
+            const sourceTxns = await this.txnDao.Model.findAll({
+                where: { share_transaction_id: { [Op.in]: sourceIds }, is_deleted: 0, status: 'VALID', transaction_status: { [Op.in]: ['IN', 'NONE'] } },
+                raw: true,
+            });
+            if (sourceTxns.length !== sourceIds.length)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'One or more source certificates are invalid or already used');
+
+            const firstSrc = sourceTxns[0];
+            const sameAs = (f) => sourceTxns.every(t => String(t[f]) === String(firstSrc[f]));
+            if (!sameAs('official_entity_id'))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'All source certificates must belong to the same shareholder');
+            if (!sameAs('share_class_id') || !sameAs('currency') || !sameAs('share_type'))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'All source certificates must have the same currency, share class and share type');
+
+            const srcQty    = sourceTxns.reduce((s, t) => s + Number(t.no_of_shares         || 0), 0);
+            const srcIssued = sourceTxns.reduce((s, t) => s + Number(t.issued_share_capital || 0), 0);
+            const srcPaidup = sourceTxns.reduce((s, t) => s + Number(t.paidup_share_capital || 0), 0);
+
+            // ── Validate split rows ───────────────────────────────────────────
+            const certNos = [];
+            let totalQty  = 0;
+            for (let i = 0; i < splits.length; i++) {
+                const certNo = String(splits[i].cert_no || '').trim();
+                const qty    = Number(splits[i].no_of_shares || 0);
+                if (!certNo)
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cert #${i + 1}: cert no. is required`);
+                if (!(qty > 0))
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cert ${certNo}: no. of shares must be greater than 0`);
+                if (certNos.includes(certNo.toLowerCase()))
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cert no. "${certNo}" is used more than once`);
+                certNos.push(certNo.toLowerCase());
+                totalQty += qty;
+            }
+            if (Math.abs(totalQty - srcQty) > 0.0001)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST,
+                    `Total of new certs (${totalQty}) must equal source shares (${srcQty})`);
+
+            // New cert nos must not clash with an active cert (sources excluded — they are invalidated)
+            const clash = await this.txnDao.Model.findOne({
+                where: {
+                    entity_id,
+                    share_cert_no:        { [Op.in]: splits.map(s => String(s.cert_no).trim()) },
+                    status:               'VALID',
+                    transaction_status:   { [Op.in]: ['IN', 'NONE'] },
+                    is_deleted:           0,
+                    share_transaction_id: { [Op.notIn]: sourceIds },
+                },
+                raw: true,
+            });
+            if (clash)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cert no. "${clash.share_cert_no}" is already in use`);
+
+            const txType     = await models.transaction_type?.findOne({ where: { t_slug: 'split-share-cert' } });
+            const tx_type_id = txType?.t_id || 7;
+            const share_set_id = uuidv4();
+
+            // Separate: source per_share as-is. Club: weighted average over the pool.
+            const issuedPS = srcQty > 0 ? srcIssued / srcQty : Number(firstSrc.per_share || 0);
+            const paidPS   = srcQty > 0 ? srcPaidup / srcQty : Number(firstSrc.per_share || 0);
+            const newPS    = isClub ? paidPS : Number(firstSrc.per_share || 0);
+
+            // ── Club: snapshot source pools and create the new weighted pool ──
+            let esSnap = [];
+            let reductionMap = {};
+            const splitEsIds = [];
+            let inCompanyShareId = firstSrc.company_share_id;
+            if (isClub) {
+                ({ snapshot: esSnap, reductionMap } = await buildSourceESContext(sourceTxns, models));
+                const newES = await createEntityShareEntry({
+                    models, entity_id,
+                    currency:       firstSrc.currency,
+                    share_class_id: firstSrc.share_class_id,
+                    share_type:     firstSrc.share_type || 'NORMAL',
+                    date:           split_date,
+                    txnType:        'club_split',
+                    userId,
+                    shares:         srcQty,
+                    issued:         srcIssued,
+                    paidup:         srcPaidup,
+                    perShare:       paidPS,
+                    issuedPerShare: issuedPS,
+                    remarks:        'Created by club split',
+                });
+                splitEsIds.push(newES.id);
+                inCompanyShareId = newES.id;
+            }
+
+            // ── Create share header ───────────────────────────────────────────
+            const shareHeader = await this.shareDao.create({
+                entity_id,
+                transaction_type_id:       tx_type_id,
+                extra_type_of_transaction: isClub ? 'CLUB_SPLIT' : 'SPLIT',
+                transaction_date:          split_date,
+                status:                    'VALID',
+                source_from:               'MANUAL',
+                share_set_id,
+                remarks:                   remarks || null,
+                created_by:                userId || null,
+                updated_by:                userId || null,
+            });
+            if (!shareHeader) throw new Error('Failed to create split share header');
+
+            const splitOldData = {
+                source_txn_ids:     sourceIds,
+                split_type:         split_mode,
+                split_es_ids:       splitEsIds,
+                source_es_snapshot: buildESSnapshotForOldData(esSnap),
+            };
+
+            const txnBase = {
+                share_id:           shareHeader.share_id,
+                share_set_id,
+                entity_id,
+                currency:           firstSrc.currency,
+                share_class_id:     firstSrc.share_class_id,
+                share_type:         firstSrc.share_type,
+                official_type:      firstSrc.official_type,
+                official_entity_id: firstSrc.official_entity_id,
+                transaction_no:     split_no || null,
+                old_share_class_id: firstSrc.share_class_id || null,
+                old_currency:       firstSrc.currency       || null,
+                old_data:           splitOldData,
+                is_retain:          0, is_ubo: 0, is_partially_paid: 0,
+                stamp_duty_payment: 0,
+                data_from:          'MANUAL', status: 'VALID', is_confirm: 1, is_deleted: 0,
+                created_by:         userId || null, updated_by: userId || null,
+            };
+
+            // ── Invalidate source certs ───────────────────────────────────────
+            await this.txnDao.Model.update(
+                { status: 'INVALID', updated_by: userId },
+                { where: { share_transaction_id: { [Op.in]: sourceIds } } }
+            );
+
+            // ── OUT row per source cert ───────────────────────────────────────
+            for (const src of sourceTxns) {
+                await this.txnDao.create({
+                    ...txnBase,
+                    company_share_id:     src.company_share_id,
+                    transaction_status:   'OUT',
+                    folio_no:             src.folio_no || null,
+                    share_cert_no:        src.share_cert_no || null,
+                    no_of_shares:         src.no_of_shares,
+                    per_share:            src.per_share,
+                    issued_per_share:     src.issued_per_share ?? src.per_share,
+                    issued_share_capital: src.issued_share_capital,
+                    paidup_share_capital: src.paidup_share_capital,
+                    no_consideration:     1,
+                    transactional_consideration: null,
+                    old_share_id:         src.share_transaction_id,
+                    old_share_cert_no:    src.share_cert_no || null,
+                });
+            }
+
+            // ── IN row per new cert ───────────────────────────────────────────
+            const inTxns = [];
+            for (const s of splits) {
+                const qty    = Number(s.no_of_shares);
+                const issued = qty * issuedPS;
+                const paidup = qty * paidPS;
+
+                const inTxn = await this.txnDao.create({
+                    ...txnBase,
+                    company_share_id:     inCompanyShareId,
+                    transaction_status:   'IN',
+                    folio_no:             String(s.folio_no || '').trim() || firstSrc.folio_no || null,
+                    share_cert_no:        String(s.cert_no).trim(),
+                    no_of_shares:         qty,
+                    per_share:            newPS,
+                    issued_per_share:     isClub ? issuedPS : (firstSrc.issued_per_share ?? issuedPS),
+                    issued_share_capital: issued,
+                    paidup_share_capital: paidup,
+                    no_consideration:     0,
+                    cash:                 paidup || null,
+                    transactional_consideration: paidup || null,
+                    transferor_official_entity_id: firstSrc.official_entity_id,
+                    transferor_no_of_shares:       qty,
+                    transferor_issued_capital:     issued,
+                    transferor_paidup_capital:     paidup,
+                    old_share_id:         firstSrc.share_transaction_id,
+                    old_share_cert_no:    firstSrc.share_cert_no || null,
+                });
+                if (!inTxn) throw new Error(`Failed to create split cert ${s.cert_no}`);
+                inTxns.push(inTxn);
+            }
+
+            // ── Club: shrink / soft-delete the source pools ──────────────────
+            if (isClub) {
+                await reduceEntityShares({ snapshot: esSnap, reductionMap, userId, models });
+            }
+
+            // ── Auto-record payments: shares were already paid on the original cert(s) ──
+            const payRows = inTxns
+                .filter(t => Number(t.paidup_share_capital) > 0)
+                .map(t => ({
+                    entity_id,
+                    share_transaction_id:      t.share_transaction_id,
+                    share_set_id,
+                    payment_type:              'CASH',
+                    cash:                      t.paidup_share_capital,
+                    otherwise_cash:            null,
+                    no_consideration:          0,
+                    consideration_description: 'Previously paid on original certificate',
+                    payment_date:              split_date,
+                    is_deleted:                0,
+                    created_by:                userId || null,
+                    updated_by:                userId || null,
+                }));
+            if (payRows.length) await this.paymentDao.bulkCreate(payRows);
+
+            // ── cs_share_distinctive ─────────────────────────────────────────
+            if (models.share_distinctive) {
+                const distinctiveRows = splits
+                    .map((s, i) => ({ s, t: inTxns[i] }))
+                    .filter(({ s }) => s.distinctive_from || s.distinctive_to)
+                    .map(({ s, t }) => ({
+                        entity_id,
+                        share_transaction_id: t.share_transaction_id,
+                        share_set_id,
+                        share_cert_no:    t.share_cert_no,
+                        distinctive_from: s.distinctive_from || null,
+                        distinctive_to:   s.distinctive_to   || null,
+                        no_of_shares:     t.no_of_shares,
+                        is_deleted:       0,
+                        created_by:       userId || null,
+                        updated_by:       userId || null,
+                    }));
+                if (distinctiveRows.length) await models.share_distinctive.bulkCreate(distinctiveRows);
+            }
+
+            return responseHandler.returnSuccess(httpStatus.CREATED, `${isClub ? 'Club split' : 'Split'} saved successfully`, {
+                share_id:   shareHeader.share_id,
+                share_set_id,
+                in_txn_ids: inTxns.map(t => t.share_transaction_id),
+            });
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
+    // ── RETAIN SPLIT ─────────────────────────────────────────────────────────────
+
+    retainSplit = async (txn_id, userId) => {
+        try {
+            const models = getCurrentModels();
+            const txn = await this.txnDao.Model.findOne({
+                where: { share_transaction_id: txn_id, is_deleted: 0 },
+                raw: true,
+            });
+            if (!txn) return responseHandler.returnError(httpStatus.NOT_FOUND, 'Transaction not found');
+            if (txn.status !== 'VALID')
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Only VALID transactions can be retained');
+
+            const shareHeader = await this.shareDao.Model.findOne({ where: { share_id: txn.share_id }, raw: true });
+            if (!shareHeader || !['SPLIT', 'CLUB_SPLIT'].includes(shareHeader.extra_type_of_transaction))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Only split transactions can be retained here');
+
+            const oldData   = txn.old_data;
+            const sourceIds = oldData?.source_txn_ids;
+            if (!Array.isArray(sourceIds) || sourceIds.length === 0)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Source certificate references not found');
+
+            // Guard: every split cert must still be VALID and unused
+            const allInTxns = await this.txnDao.Model.findAll({
+                where: { share_id: txn.share_id, transaction_status: 'IN', is_deleted: 0 },
+                raw: true,
+            });
+            for (const inTxn of allInTxns) {
+                if (inTxn.status !== 'VALID')
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cannot retain: split cert ${inTxn.share_cert_no || inTxn.share_transaction_id} is no longer valid`);
+                const furtherUse = await this.txnDao.Model.findOne({
+                    where: { old_share_id: inTxn.share_transaction_id, is_deleted: 0, status: 'VALID' },
+                    raw: true,
+                });
+                if (furtherUse)
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cannot retain: split cert ${inTxn.share_cert_no || inTxn.share_transaction_id} has already been used in another transaction`);
+            }
+
+            const inTxnIds = allInTxns.map(t => t.share_transaction_id);
+
+            await Promise.all([
+                // Restore source certs to VALID
+                this.txnDao.Model.update(
+                    { status: 'VALID', updated_by: userId },
+                    { where: { share_transaction_id: { [Op.in]: sourceIds.map(Number) } } }
+                ),
+                // Invalidate OUT + IN rows of this split
+                this.txnDao.Model.update(
+                    { status: 'INVALID', updated_by: userId },
+                    { where: { share_id: txn.share_id, transaction_status: 'OUT', is_deleted: 0 } }
+                ),
+                ...(inTxnIds.length ? [
+                    this.txnDao.Model.update(
+                        { status: 'INVALID', updated_by: userId },
+                        { where: { share_transaction_id: { [Op.in]: inTxnIds } } }
+                    ),
+                    this.paymentDao.Model.update(
+                        { is_deleted: 1, updated_by: userId },
+                        { where: { share_transaction_id: { [Op.in]: inTxnIds } } }
+                    ),
+                    ...(models.share_distinctive ? [
+                        models.share_distinctive.update(
+                            { is_deleted: 1, updated_by: userId },
+                            { where: { share_transaction_id: { [Op.in]: inTxnIds } } }
+                        ),
+                    ] : []),
+                ] : []),
+                // Soft-delete ledger rows
+                this.ledgerDao.Model.update(
+                    { is_deleted: 1, updated_by: userId },
+                    { where: { share_id: txn.share_id } }
+                ),
+                // Soft-delete share header
+                this.shareDao.updateWhere(
+                    { is_deleted: 1, updated_by: userId },
+                    { share_id: txn.share_id }
+                ),
+            ]);
+
+            // Club split: remove the weighted pool and restore the source pools
+            const splitEsIds = oldData?.split_es_ids || [];
+            if (splitEsIds.length > 0) {
+                await deleteEntityShares(splitEsIds, userId, models);
+                await restoreEntitySharesSnapshot(oldData?.source_es_snapshot, userId, models);
+            }
+
+            return responseHandler.returnSuccess(httpStatus.OK, 'Split retained (reversed) successfully');
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
+    // ── CREATE COMBINE (combine share certs) ─────────────────────────────────────
+    //
+    // Combines two or more certs of the SAME holder under one new cert no.
+    // Per share is never changed: sources are grouped by their company share pool
+    // (one pool = one per share) and the new cert gets one IN row per group, e.g.
+    //   s1 70 @1 + s2 30 @1 + s3 100 @2  →  sc1 100 @1  +  sc1 100 @2
+    // - sources → INVALID with an OUT row each
+    // - entity_shares untouched (every group stays in its own pool)
+    //
+    // body: { entity_id, source_txn_ids, combine_no, combine_date, remarks,
+    //         new_cert_no, new_folio_no?, distinctive_from?, distinctive_to? }
+
+    createCombine = async (body, userId) => {
+        try {
+            const models = getCurrentModels();
+            const {
+                entity_id, combine_no, combine_date, remarks,
+                new_cert_no, new_folio_no, distinctive_from, distinctive_to,
+            } = body;
+            const sourceIds = (Array.isArray(body.source_txn_ids) ? body.source_txn_ids : []).filter(Boolean).map(Number);
+            const certNo    = String(new_cert_no || '').trim();
+
+            if (!entity_id)    return responseHandler.returnError(httpStatus.BAD_REQUEST, 'entity_id is required');
+            if (!combine_date) return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Combine date is required');
+            if (!certNo)       return responseHandler.returnError(httpStatus.BAD_REQUEST, 'New cert no. is required');
+            if (sourceIds.length < 2)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Select at least two certificates to combine');
+
+            // ── Fetch & validate source txns ──────────────────────────────────
+            const sourceTxns = await this.txnDao.Model.findAll({
+                where: { share_transaction_id: { [Op.in]: sourceIds }, is_deleted: 0, status: 'VALID', transaction_status: { [Op.in]: ['IN', 'NONE'] } },
+                order: [['share_transaction_id', 'ASC']],
+                raw: true,
+            });
+            if (sourceTxns.length !== sourceIds.length)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'One or more source certificates are invalid or already used');
+
+            const firstSrc = sourceTxns[0];
+            const sameAs = (f) => sourceTxns.every(t => String(t[f]) === String(firstSrc[f]));
+            if (!sameAs('official_entity_id'))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'All certificates must belong to the same shareholder');
+            if (!sameAs('share_class_id') || !sameAs('currency') || !sameAs('share_type'))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'All certificates must have the same currency, share class and share type');
+
+            // New cert no must not clash with an active cert (sources excluded — they are invalidated)
+            const clash = await this.txnDao.Model.findOne({
+                where: {
+                    entity_id,
+                    share_cert_no:        certNo,
+                    status:               'VALID',
+                    transaction_status:   { [Op.in]: ['IN', 'NONE'] },
+                    is_deleted:           0,
+                    share_transaction_id: { [Op.notIn]: sourceIds },
+                },
+                raw: true,
+            });
+            if (clash)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, `Cert no. "${certNo}" is already in use`);
+
+            // ── Group sources by company share pool (= per share) ─────────────
+            const groups = [];
+            const groupByPool = {};
+            for (const t of sourceTxns) {
+                const k = String(t.company_share_id);
+                if (!groupByPool[k]) {
+                    groupByPool[k] = { first: t, txns: [], qty: 0, issued: 0, paidup: 0, cash: 0, oc: 0 };
+                    groups.push(groupByPool[k]);
+                }
+                const g = groupByPool[k];
+                g.txns.push(t);
+                g.qty    += Number(t.no_of_shares         || 0);
+                g.issued += Number(t.issued_share_capital || 0);
+                g.paidup += Number(t.paidup_share_capital || 0);
+                g.cash   += Number(t.cash                 || 0);
+                g.oc     += Number(t.otherwise_cash       || 0);
+            }
+
+            const txType     = await models.transaction_type?.findOne({ where: { t_slug: 'combine-shares' } });
+            const tx_type_id = txType?.t_id || 8;
+            const share_set_id = uuidv4();
+
+            // ── Create share header ───────────────────────────────────────────
+            const shareHeader = await this.shareDao.create({
+                entity_id,
+                transaction_type_id:       tx_type_id,
+                extra_type_of_transaction: 'COMBINE',
+                transaction_date:          combine_date,
+                status:                    'VALID',
+                source_from:               'MANUAL',
+                share_set_id,
+                remarks:                   remarks || null,
+                created_by:                userId || null,
+                updated_by:                userId || null,
+            });
+            if (!shareHeader) throw new Error('Failed to create combine share header');
+
+            const txnBase = {
+                share_id:           shareHeader.share_id,
+                share_set_id,
+                entity_id,
+                currency:           firstSrc.currency,
+                share_class_id:     firstSrc.share_class_id,
+                share_type:         firstSrc.share_type,
+                official_type:      firstSrc.official_type,
+                official_entity_id: firstSrc.official_entity_id,
+                transaction_no:     combine_no || null,
+                old_share_class_id: firstSrc.share_class_id || null,
+                old_currency:       firstSrc.currency       || null,
+                old_data:           { source_txn_ids: sourceIds },
+                is_retain:          0, is_ubo: firstSrc.is_ubo || 0, is_partially_paid: 0,
+                stamp_duty_payment: 0,
+                data_from:          'MANUAL', status: 'VALID', is_confirm: 1, is_deleted: 0,
+                created_by:         userId || null, updated_by: userId || null,
+            };
+
+            // ── Invalidate source certs ───────────────────────────────────────
+            await this.txnDao.Model.update(
+                { status: 'INVALID', updated_by: userId },
+                { where: { share_transaction_id: { [Op.in]: sourceIds } } }
+            );
+
+            // ── OUT row per source cert ───────────────────────────────────────
+            for (const src of sourceTxns) {
+                await this.txnDao.create({
+                    ...txnBase,
+                    company_share_id:     src.company_share_id,
+                    transaction_status:   'OUT',
+                    folio_no:             src.folio_no || null,
+                    share_cert_no:        src.share_cert_no || null,
+                    no_of_shares:         src.no_of_shares,
+                    per_share:            src.per_share,
+                    issued_per_share:     src.issued_per_share ?? src.per_share,
+                    issued_share_capital: src.issued_share_capital,
+                    paidup_share_capital: src.paidup_share_capital,
+                    no_consideration:     1,
+                    transactional_consideration: null,
+                    old_share_id:         src.share_transaction_id,
+                    old_share_cert_no:    src.share_cert_no || null,
+                });
+            }
+
+            // ── One IN row per per-share group, all under the new cert no. ────
+            const folioNo = String(new_folio_no || '').trim() || firstSrc.folio_no || null;
+            const inTxns  = [];
+            for (const g of groups) {
+                // Consideration carried over from the sources; fall back to paid-up as cash
+                const hasConsid = (g.cash + g.oc) > 0;
+                const cash = hasConsid ? g.cash : g.paidup;
+                const oc   = hasConsid ? g.oc   : 0;
+
+                const inTxn = await this.txnDao.create({
+                    ...txnBase,
+                    company_share_id:     g.first.company_share_id,
+                    transaction_status:   'IN',
+                    folio_no:             folioNo,
+                    share_cert_no:        certNo,
+                    no_of_shares:         g.qty,
+                    per_share:            g.first.per_share,
+                    issued_per_share:     g.first.issued_per_share ?? g.first.per_share,
+                    issued_share_capital: g.issued,
+                    paidup_share_capital: g.paidup,
+                    cash:                 cash || null,
+                    otherwise_cash:       oc   || null,
+                    no_consideration:     0,
+                    transactional_consideration: (cash + oc) || null,
+                    transferor_official_entity_id: firstSrc.official_entity_id,
+                    transferor_no_of_shares:       g.qty,
+                    transferor_issued_capital:     g.issued,
+                    transferor_paidup_capital:     g.paidup,
+                    old_share_id:         g.first.share_transaction_id,
+                    old_share_cert_no:    g.first.share_cert_no || null,
+                });
+                if (!inTxn) throw new Error('Failed to create combined cert');
+                inTxns.push(inTxn);
+
+                // Payments: carried over from the original certs
+                const payBase = {
+                    entity_id, share_transaction_id: inTxn.share_transaction_id, share_set_id,
+                    no_consideration: 0, consideration_description: 'Previously paid on original certificates',
+                    payment_date: combine_date, is_deleted: 0, created_by: userId || null, updated_by: userId || null,
+                };
+                const payRows = [];
+                if (cash > 0) payRows.push({ ...payBase, payment_type: 'CASH',                cash,       otherwise_cash: null });
+                if (oc   > 0) payRows.push({ ...payBase, payment_type: 'OTHERWISE_THAN_CASH', cash: null, otherwise_cash: oc });
+                if (payRows.length) await this.paymentDao.bulkCreate(payRows);
+            }
+
+            // ── cs_share_distinctive (one range for the combined cert) ───────
+            if ((distinctive_from || distinctive_to) && models.share_distinctive) {
+                await models.share_distinctive.create({
+                    entity_id,
+                    share_transaction_id: inTxns[0].share_transaction_id,
+                    share_set_id,
+                    share_cert_no:    certNo,
+                    distinctive_from: distinctive_from || null,
+                    distinctive_to:   distinctive_to   || null,
+                    no_of_shares:     groups.reduce((s, g) => s + g.qty, 0),
+                    is_deleted:       0,
+                    created_by:       userId || null,
+                    updated_by:       userId || null,
+                });
+            }
+
+            return responseHandler.returnSuccess(httpStatus.CREATED, 'Combine saved successfully', {
+                share_id:   shareHeader.share_id,
+                share_set_id,
+                in_txn_ids: inTxns.map(t => t.share_transaction_id),
+            });
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
+    // ── RETAIN COMBINE ───────────────────────────────────────────────────────────
+
+    retainCombine = async (txn_id, userId) => {
+        try {
+            const models = getCurrentModels();
+            const txn = await this.txnDao.Model.findOne({
+                where: { share_transaction_id: txn_id, is_deleted: 0 },
+                raw: true,
+            });
+            if (!txn) return responseHandler.returnError(httpStatus.NOT_FOUND, 'Transaction not found');
+            if (txn.status !== 'VALID' || txn.transaction_status !== 'IN')
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Only the VALID combined certificate can be retained');
+
+            const shareHeader = await this.shareDao.Model.findOne({ where: { share_id: txn.share_id }, raw: true });
+            if (!shareHeader || shareHeader.extra_type_of_transaction !== 'COMBINE')
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Only combine transactions can be retained here');
+
+            const oldData   = txn.old_data;
+            const sourceIds = oldData?.source_txn_ids;
+            if (!Array.isArray(sourceIds) || sourceIds.length === 0)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Source certificate references not found');
+
+            // Guard: every per-share line of the combined cert must still be VALID and unused
+            const allInTxns = await this.txnDao.Model.findAll({
+                where: { share_id: txn.share_id, transaction_status: 'IN', is_deleted: 0 },
+                raw: true,
+            });
+            for (const inTxn of allInTxns) {
+                if (inTxn.status !== 'VALID')
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Cannot retain: part of the combined certificate is no longer valid');
+                const furtherUse = await this.txnDao.Model.findOne({
+                    where: { old_share_id: inTxn.share_transaction_id, is_deleted: 0, status: 'VALID' },
+                    raw: true,
+                });
+                if (furtherUse)
+                    return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Cannot retain: the combined certificate has already been used in another transaction');
+            }
+            const inTxnIds = allInTxns.map(t => t.share_transaction_id);
+
+            await Promise.all([
+                // Restore source certs to VALID
+                this.txnDao.Model.update(
+                    { status: 'VALID', updated_by: userId },
+                    { where: { share_transaction_id: { [Op.in]: sourceIds.map(Number) } } }
+                ),
+                // Invalidate OUT rows + combined IN row
+                this.txnDao.Model.update(
+                    { status: 'INVALID', updated_by: userId },
+                    { where: { share_id: txn.share_id, is_deleted: 0 } }
+                ),
+                this.paymentDao.Model.update(
+                    { is_deleted: 1, updated_by: userId },
+                    { where: { share_transaction_id: { [Op.in]: inTxnIds } } }
+                ),
+                ...(models.share_distinctive ? [
+                    models.share_distinctive.update(
+                        { is_deleted: 1, updated_by: userId },
+                        { where: { share_transaction_id: { [Op.in]: inTxnIds } } }
+                    ),
+                ] : []),
+                this.ledgerDao.Model.update(
+                    { is_deleted: 1, updated_by: userId },
+                    { where: { share_id: txn.share_id } }
+                ),
+                this.shareDao.updateWhere(
+                    { is_deleted: 1, updated_by: userId },
+                    { share_id: txn.share_id }
+                ),
+            ]);
+
+            // entity_shares never changed on combine — nothing to restore
+
+            return responseHandler.returnSuccess(httpStatus.OK, 'Combine retained (reversed) successfully');
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
+    // ── CREATE RECLASSIFICATION (move a cert to another share class) ───────────
+    //
+    // The whole cert moves to another share class + share type combination
+    // (e.g. Ordinary/Normal → Preference/Normal). Currency and per share stay the same.
+    // - source → INVALID with an OUT row; one IN row in the new class
+    // - company shares: source pool reduced by the cert; the cert is added to the
+    //   new class's pool with the same currency/share type/per share, or a new
+    //   pool is created when none exists
+    // - folio no. must not duplicate an existing active cert's folio
+    //
+    // body: { entity_id, source_txn_id, new_share_class_id, new_share_type?, reclass_no,
+    //         reclass_date, remarks, new_cert_no, new_folio_no }
+
+    createReclassification = async (body, userId) => {
+        try {
+            const models = getCurrentModels();
+            const {
+                entity_id, source_txn_id, new_share_class_id,
+                reclass_no, reclass_date, remarks,
+            } = body;
+            const certNo  = String(body.new_cert_no  || '').trim();
+            const folioNo = String(body.new_folio_no || '').trim();
+
+            if (!entity_id)          return responseHandler.returnError(httpStatus.BAD_REQUEST, 'entity_id is required');
+            if (!source_txn_id)      return responseHandler.returnError(httpStatus.BAD_REQUEST, 'source_txn_id is required');
+            if (!new_share_class_id) return responseHandler.returnError(httpStatus.BAD_REQUEST, 'New share class is required');
+            if (!reclass_date)       return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Date of transaction is required');
+            if (!folioNo)            return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Folio no. is required');
+            if (!certNo)             return responseHandler.returnError(httpStatus.BAD_REQUEST, 'New share cert no. is required');
+
+            // ── Fetch & validate source txn ───────────────────────────────────
+            const src = await this.txnDao.Model.findOne({
+                where: { share_transaction_id: Number(source_txn_id), is_deleted: 0, status: 'VALID', transaction_status: { [Op.in]: ['IN', 'NONE'] } },
+                raw: true,
+            });
+            if (!src) return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Source certificate not found or already used');
+            const newShareType = body.new_share_type || src.share_type || 'NORMAL';
+            if (!['NORMAL', 'BONUS', 'GUARANTEE'].includes(newShareType))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Invalid share type');
+            if (String(src.share_class_id) === String(new_share_class_id) && newShareType === (src.share_type || 'NORMAL'))
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Choose a share class / share type different from the current one');
+
+            const newClass = await models.share_class_master?.findOne({ where: { sc_id: Number(new_share_class_id), is_deleted: 0 }, raw: true });
+            if (!newClass) return responseHandler.returnError(httpStatus.BAD_REQUEST, 'New share class not found');
+
+            // Folio no. must be unique among active certs
+            const folioClash = await this.txnDao.Model.findOne({
+                where: { entity_id, folio_no: folioNo, status: 'VALID', transaction_status: { [Op.in]: ['IN', 'NONE'] }, is_deleted: 0 },
+                raw: true,
+            });
+            if (folioClash) return responseHandler.returnError(httpStatus.BAD_REQUEST, `Folio no. "${folioNo}" already exists`);
+
+            // Cert no. is unique company-wide among active certs (source excluded — it is invalidated)
+            const certClash = await this.txnDao.Model.findOne({
+                where: {
+                    entity_id, share_cert_no: certNo, status: 'VALID',
+                    transaction_status: { [Op.in]: ['IN', 'NONE'] }, is_deleted: 0,
+                    share_transaction_id: { [Op.ne]: src.share_transaction_id },
+                },
+                raw: true,
+            });
+            if (certClash) return responseHandler.returnError(httpStatus.BAD_REQUEST, `Share Cert No "${certNo}" already exists`);
+
+            const qty    = Number(src.no_of_shares         || 0);
+            const issued = Number(src.issued_share_capital || 0);
+            const paidup = Number(src.paidup_share_capital || 0);
+            const perSh  = Number(src.per_share            || 0);
+            const issuedPS = src.issued_per_share ?? perSh;
+
+            // ── Company shares: snapshot source pool + matching target pool ──
+            const { snapshot: srcSnap, reductionMap } = await buildSourceESContext([src], models);
+            const targetCandidates = await models.entity_shares.findAll({
+                where: {
+                    entity_id,
+                    currency:       src.currency,
+                    share_class_id: Number(new_share_class_id),
+                    share_type:     newShareType,
+                    is_deleted:     0,
+                },
+                raw: true,
+            });
+            const targetES = targetCandidates.find(e => Math.abs(Number(e.per_share || 0) - perSh) < 1e-9) || null;
+
+            const txType     = await models.transaction_type?.findOne({ where: { t_slug: 'reclassification' } });
+            const tx_type_id = txType?.t_id || 19;
+            const share_set_id = uuidv4();
+
+            const reclassEsIds = [];
+            const esSnapshot   = [...srcSnap, ...(targetES ? [targetES] : [])];
+            let targetEsId;
+            if (targetES) {
+                await models.entity_shares.update({
+                    number_of_shares:         Number(targetES.number_of_shares         || 0) + qty,
+                    authorized_share_capital: Number(targetES.authorized_share_capital || 0) + issued,
+                    issued_share_capital:     Number(targetES.issued_share_capital     || 0) + issued,
+                    paid_up_capital:          Number(targetES.paid_up_capital          || 0) + paidup,
+                    updated_by:               userId,
+                }, { where: { id: targetES.id } });
+                targetEsId = targetES.id;
+            } else {
+                const newES = await createEntityShareEntry({
+                    models, entity_id,
+                    currency:       src.currency,
+                    share_class_id: Number(new_share_class_id),
+                    share_type:     newShareType,
+                    date:           reclass_date,
+                    txnType:        'reclassification',
+                    userId,
+                    shares:         qty,
+                    issued,
+                    paidup,
+                    perShare:       perSh,
+                    issuedPerShare: issuedPS,
+                    remarks:        'Created by reclassification',
+                });
+                reclassEsIds.push(newES.id);
+                targetEsId = newES.id;
+            }
+            await reduceEntityShares({ snapshot: srcSnap, reductionMap, userId, models });
+
+            // ── Create share header ───────────────────────────────────────────
+            const shareHeader = await this.shareDao.create({
+                entity_id,
+                transaction_type_id:       tx_type_id,
+                extra_type_of_transaction: 'RECLASSIFICATION',
+                transaction_date:          reclass_date,
+                status:                    'VALID',
+                source_from:               'MANUAL',
+                share_set_id,
+                remarks:                   remarks || null,
+                created_by:                userId || null,
+                updated_by:                userId || null,
+            });
+            if (!shareHeader) throw new Error('Failed to create reclassification share header');
+
+            const txnBase = {
+                share_id:           shareHeader.share_id,
+                share_set_id,
+                entity_id,
+                currency:           src.currency,
+                share_type:         src.share_type,
+                official_type:      src.official_type,
+                official_entity_id: src.official_entity_id,
+                transaction_no:     reclass_no || null,
+                per_share:          perSh,
+                issued_per_share:   issuedPS,
+                old_share_id:       src.share_transaction_id,
+                old_share_class_id: src.share_class_id || null,
+                old_currency:       src.currency       || null,
+                old_share_cert_no:  src.share_cert_no  || null,
+                old_data: {
+                    source_txn_ids:     [src.share_transaction_id],
+                    reclass_es_ids:     reclassEsIds,
+                    source_es_snapshot: buildESSnapshotForOldData(esSnapshot),
+                },
+                is_retain: 0, is_ubo: src.is_ubo || 0, is_partially_paid: 0, stamp_duty_payment: 0,
+                data_from: 'MANUAL', status: 'VALID', is_confirm: 1, is_deleted: 0,
+                created_by: userId || null, updated_by: userId || null,
+            };
+
+            // ── Invalidate source cert + OUT row in the old class ────────────
+            await this.txnDao.Model.update(
+                { status: 'INVALID', updated_by: userId },
+                { where: { share_transaction_id: src.share_transaction_id } }
+            );
+            await this.txnDao.create({
+                ...txnBase,
+                company_share_id:     src.company_share_id,
+                share_class_id:       src.share_class_id,
+                transaction_status:   'OUT',
+                folio_no:             src.folio_no || null,
+                share_cert_no:        src.share_cert_no || null,
+                no_of_shares:         qty,
+                issued_share_capital: issued,
+                paidup_share_capital: paidup,
+                no_consideration:     1,
+                transactional_consideration: null,
+            });
+
+            // ── IN row in the new class ───────────────────────────────────────
+            const hasConsid = (Number(src.cash || 0) + Number(src.otherwise_cash || 0)) > 0;
+            const cash = hasConsid ? Number(src.cash || 0)           : paidup;
+            const oc   = hasConsid ? Number(src.otherwise_cash || 0) : 0;
+            const inTxn = await this.txnDao.create({
+                ...txnBase,
+                company_share_id:     targetEsId,
+                share_class_id:       Number(new_share_class_id),
+                share_type:           newShareType,
+                transaction_status:   'IN',
+                folio_no:             folioNo,
+                share_cert_no:        certNo,
+                no_of_shares:         qty,
+                issued_share_capital: issued,
+                paidup_share_capital: paidup,
+                cash:                 cash || null,
+                otherwise_cash:       oc   || null,
+                no_consideration:     0,
+                transactional_consideration: (cash + oc) || null,
+                transferor_official_entity_id: src.official_entity_id,
+                transferor_no_of_shares:       qty,
+                transferor_issued_capital:     issued,
+                transferor_paidup_capital:     paidup,
+            });
+            if (!inTxn) throw new Error('Failed to create reclassified cert');
+
+            // ── Payments: carried over from the original cert ────────────────
+            const payBase = {
+                entity_id, share_transaction_id: inTxn.share_transaction_id, share_set_id,
+                no_consideration: 0, consideration_description: 'Previously paid on original certificate',
+                payment_date: reclass_date, is_deleted: 0, created_by: userId || null, updated_by: userId || null,
+            };
+            const payRows = [];
+            if (cash > 0) payRows.push({ ...payBase, payment_type: 'CASH',                cash,       otherwise_cash: null });
+            if (oc   > 0) payRows.push({ ...payBase, payment_type: 'OTHERWISE_THAN_CASH', cash: null, otherwise_cash: oc });
+            if (payRows.length) await this.paymentDao.bulkCreate(payRows);
+
+            return responseHandler.returnSuccess(httpStatus.CREATED, 'Reclassification saved successfully', {
+                share_id:  shareHeader.share_id,
+                share_set_id,
+                in_txn_id: inTxn.share_transaction_id,
+            });
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
+    // ── RETAIN RECLASSIFICATION ──────────────────────────────────────────────────
+
+    retainReclassification = async (txn_id, userId) => {
+        try {
+            const models = getCurrentModels();
+            const txn = await this.txnDao.Model.findOne({
+                where: { share_transaction_id: txn_id, is_deleted: 0 },
+                raw: true,
+            });
+            if (!txn) return responseHandler.returnError(httpStatus.NOT_FOUND, 'Transaction not found');
+            if (txn.status !== 'VALID' || txn.transaction_status !== 'IN')
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Only the VALID reclassified certificate can be retained');
+
+            const shareHeader = await this.shareDao.Model.findOne({ where: { share_id: txn.share_id }, raw: true });
+            if (!shareHeader || shareHeader.extra_type_of_transaction !== 'RECLASSIFICATION')
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Only reclassification transactions can be retained here');
+
+            const oldData   = txn.old_data;
+            const sourceIds = oldData?.source_txn_ids;
+            if (!Array.isArray(sourceIds) || sourceIds.length === 0)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Source certificate references not found');
+
+            const furtherUse = await this.txnDao.Model.findOne({
+                where: { old_share_id: txn.share_transaction_id, is_deleted: 0, status: 'VALID' },
+                raw: true,
+            });
+            if (furtherUse)
+                return responseHandler.returnError(httpStatus.BAD_REQUEST, 'Cannot retain: the reclassified certificate has already been used in another transaction');
+
+            await Promise.all([
+                this.txnDao.Model.update(
+                    { status: 'VALID', updated_by: userId },
+                    { where: { share_transaction_id: { [Op.in]: sourceIds.map(Number) } } }
+                ),
+                this.txnDao.Model.update(
+                    { status: 'INVALID', updated_by: userId },
+                    { where: { share_id: txn.share_id, is_deleted: 0 } }
+                ),
+                this.paymentDao.Model.update(
+                    { is_deleted: 1, updated_by: userId },
+                    { where: { share_transaction_id: txn.share_transaction_id } }
+                ),
+                this.ledgerDao.Model.update(
+                    { is_deleted: 1, updated_by: userId },
+                    { where: { share_id: txn.share_id } }
+                ),
+                this.shareDao.updateWhere(
+                    { is_deleted: 1, updated_by: userId },
+                    { share_id: txn.share_id }
+                ),
+            ]);
+
+            // Company shares: drop the pool created for the new class (if any) and
+            // restore the source pool + the new-class pool it was added to
+            await deleteEntityShares(oldData?.reclass_es_ids || [], userId, models);
+            await restoreEntitySharesSnapshot(oldData?.source_es_snapshot, userId, models);
+
+            return responseHandler.returnSuccess(httpStatus.OK, 'Reclassification retained (reversed) successfully');
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
+    // ── CHECK FOLIO NO. (must not duplicate an active cert's folio) ─────────────
+
+    checkFolioNo = async ({ entity_id, folio_no }) => {
+        try {
+            const folioNo = String(folio_no || '').trim();
+            if (!entity_id || !folioNo)
+                return responseHandler.returnSuccess(httpStatus.OK, 'Nothing to check', { exists: false });
+            const existing = await this.txnDao.Model.findOne({
+                where: { entity_id, folio_no: folioNo, status: 'VALID', transaction_status: { [Op.in]: ['IN', 'NONE'] }, is_deleted: 0 },
+                attributes: ['share_transaction_id'],
+                raw: true,
+            });
+            return responseHandler.returnSuccess(httpStatus.OK, existing ? 'Folio no. exists' : 'Folio no. available', { exists: !!existing });
+        } catch (e) {
+            logger.error(e);
+            return responseHandler.returnError(httpStatus.BAD_GATEWAY, e.message);
+        }
+    };
+
     // ── CHECK REPLACEMENT CERT (lookup existing cert for combining) ─────────────
 
     listCompatibleReplacementCerts = async ({ entity_id, source_txn_id }) => {
@@ -3122,7 +4083,13 @@ class ShareService {
     checkReplacementCert = async ({ entity_id, cert_no, source_txn_id }) => {
         try {
             const models = getCurrentModels();
-            const existing = await this.txnDao.Model.findOne({
+            const sourceTxn = await this.txnDao.Model.findOne({
+                where: { share_transaction_id: Number(source_txn_id) },
+                attributes: ['per_share'],
+                raw: true,
+            });
+            // A cert no. can have several lines (one per per_share); prefer the matching one
+            const existingLines = await this.txnDao.Model.findAll({
                 where: {
                     entity_id,
                     share_cert_no:        cert_no,
@@ -3134,6 +4101,8 @@ class ShareService {
                 include: [{ model: models.official_entity, as: 'official_entity', attributes: ['name'], required: false }],
                 raw: true,
             });
+            const existing = existingLines.find(l => sourceTxn && Number(l.per_share) === Number(sourceTxn.per_share))
+                || existingLines[0] || null;
             if (!existing) return responseHandler.returnSuccess(httpStatus.OK, 'No existing cert', { exists: false });
             return responseHandler.returnSuccess(httpStatus.OK, 'Existing cert found', {
                 exists: true,

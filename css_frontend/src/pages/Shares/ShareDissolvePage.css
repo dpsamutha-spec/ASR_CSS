@@ -104,36 +104,6 @@
 .sdp-canvas { display: flex; flex-direction: column; gap: 0; }
 .sdp-body { display: flex; flex-direction: column; gap: 14px; }
 
-/* ── Transferor Info Bar ──────────────────────────────────────── */
-.sdp-transferor-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: #fff;
-  border: 1px solid #e2e5ef;
-  border-radius: 8px;
-  padding: 9px 14px;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-.sdp-transferor-bar i { color: #405189; font-size: 14px; }
-.sdp-transferor-bar-lbl { font-weight: 600; color: #6c757d; }
-.sdp-transferor-bar strong { color: #212529; font-size: 13px; }
-.sdp-transferor-bar-sep { flex: 1; }
-.sdp-transferor-bar-meta { color: #6c757d; font-size: 11.5px; }
-.sdp-sep-badge {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  background: #f3f6ff;
-  border: 1px solid #d5daf5;
-  border-radius: 12px;
-  font-size: 11px;
-  font-weight: 600;
-  color: #405189;
-}
-
 /* ── Per-Price-Group Row ──────────────────────────────────────── */
 .sdp-pg-row {
   background: #fff;
